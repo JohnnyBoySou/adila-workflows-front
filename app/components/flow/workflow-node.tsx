@@ -52,7 +52,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
   const meta = VARIANT_META[variant];
   const Icon = meta.icon;
   // Seletor fino — só este nó re-renderiza quando o status dele muda.
-  const executionStatus = useExecutionStore((s) => s.statusByNodeId[id]);
+  const executionStatus = useExecutionStore((s) => s.stepsByNodeId[id]?.status);
   const executionRing = executionStatus ? EXECUTION_RING[executionStatus] : null;
 
   return (

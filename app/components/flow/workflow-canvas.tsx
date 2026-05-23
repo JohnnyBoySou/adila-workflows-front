@@ -30,8 +30,10 @@ import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
 import { NodeConfigDialog, type NodeMeta } from "./node-config-dialog";
+import { NodeRunInspector } from "./node-run-inspector";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
+import { useExecutionStore } from "~/stores/execution";
 import { Button } from "~/components/ui/button";
 
 // Campos de `node.data` que pertencem ao editor, não ao engine — não
@@ -165,6 +167,37 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
     values: Record<string, unknown>;
   } | null>(null);
 
+  // ── Inspector de execução (click único quando há run focado) ───────────
+  // Abre o sheet à direita pra ver input/output do nó no run atual. O state
+  // do sheet vive aqui porque depende de `nodeId` e da seleção do canvas.
+  const [inspectorNodeId, setInspectorNodeId] = useState<string | null>(null);
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const focusedRunId = useExecutionStore((s) => s.focusedRunId);
+  const stepsByNodeId = useExecutionStore((s) => s.stepsByNodeId);
+
+  // Label exibido no inspector — tenta o title customizado, senão o nodeType.
+  const inspectorLabel = useMemo(() => {
+    if (!inspectorNodeId) return undefined;
+    const node = nodes.find((n) => n.id === inspectorNodeId);
+    const d = (node?.data ?? {}) as { title?: unknown; nodeType?: unknown };
+    if (typeof d.title === "string" && d.title.trim()) return d.title;
+    if (typeof d.nodeType === "string") return d.nodeType;
+    return undefined;
+  }, [inspectorNodeId, nodes]);
+
+  const handleNodeClick = useCallback(
+    (_e: React.MouseEvent, node: Node) => {
+      // Sem run focado, click é apenas seleção (React Flow já cuida). Só
+      // abrimos o inspector se houver dado pra inspecionar — evita "abre
+      // sheet vazio" toda vez que clicar num nó na composição inicial.
+      if (!focusedRunId) return;
+      if (!stepsByNodeId[node.id]) return;
+      setInspectorNodeId(node.id);
+      setInspectorOpen(true);
+    },
+    [focusedRunId, stepsByNodeId],
+  );
+
   const handleNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
     // Nó executável (React Flow type = "workflow") → engine type vem de data.nodeType.
     // Visuais (sticky/container) → mapeia pro tipo do engine equivalente.
@@ -239,6 +272,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeClick={handleNodeClick}
         onNodeDoubleClick={handleNodeDoubleClick}
         fitView
         proOptions={{ hideAttribution: true }}
@@ -287,6 +321,12 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         meta={configState?.meta}
         values={configState?.values ?? {}}
         onSave={handleConfigSave}
+      />
+      <NodeRunInspector
+        open={inspectorOpen}
+        onOpenChange={setInspectorOpen}
+        nodeId={inspectorNodeId}
+        {...(inspectorLabel !== undefined && { nodeLabel: inspectorLabel })}
       />
     </>
   );

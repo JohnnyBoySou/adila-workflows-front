@@ -31,6 +31,8 @@ export type RunStep = {
   nodeId: string;
   nodeType: string;
   status: StepStatus;
+  /** Input que o nó recebeu — útil pra debug e pra alimentar templates no editor. */
+  input: Record<string, unknown>;
   output: Record<string, unknown> | null;
   error: Record<string, unknown> | null;
   startedAt: string | null;

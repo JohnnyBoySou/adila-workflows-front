@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { Link } from "react-router";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import {
   Area,
   AreaChart,
@@ -36,7 +38,13 @@ import {
   ChartTooltipContent,
   type ChartConfig,
 } from "~/components/ui/chart";
+import { Skeleton } from "~/components/ui/skeleton";
 import { StatusBars, type StatusBucket } from "~/components/status-bars";
+import { queryKeys } from "~/lib/query-keys";
+import * as workflowsApi from "~/services/workflows";
+import * as runsApi from "~/services/runs";
+import type { RunStatus, WorkflowRun } from "~/services/runs";
+import type { WorkflowSummary } from "~/services/workflows";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -50,68 +58,13 @@ export const handle: DashboardHandle = {
 };
 
 /* -------------------------------------------------------------------------- */
-/* Dados mock                                                                  */
+/* Parâmetros                                                                  */
 /* -------------------------------------------------------------------------- */
-// TODO: trocar por agregações reais quando o backend expor (ex.: /metrics).
 
-const stats = [
-  { label: "Workflows ativos", value: "12", hint: "+2 esta semana", icon: Workflow },
-  { label: "Execuções hoje", value: "284", hint: "+18% vs ontem", icon: PlayCircle },
-  { label: "Taxa de sucesso", value: "98,4%", hint: "Últimos 7 dias", icon: CheckCircle2 },
-  { label: "Tempo médio", value: "1,2s", hint: "Por execução", icon: Clock },
-] as const;
-
-// Execuções por hora nas últimas 24h
-const executionsByHour = Array.from({ length: 24 }, (_, h) => {
-  // Curva sintética: pico de manhã e à tarde
-  const base = 10 + 25 * Math.sin((h / 24) * Math.PI * 2 - Math.PI / 2);
-  const noise = Math.round((Math.sin(h * 1.7) + 1) * 5);
-  return {
-    hour: `${String(h).padStart(2, "0")}h`,
-    success: Math.max(0, Math.round(base + noise)),
-    failed: Math.max(0, Math.round(noise / 3 + (h % 5 === 0 ? 4 : 0))),
-  };
-});
-
-// Tempo médio de execução (últimas 12 janelas de 5 min)
-const latencySeries = Array.from({ length: 24 }, (_, i) => ({
-  bucket: `${i * 5}m`,
-  avg: 0.8 + Math.sin(i / 3) * 0.4 + (i > 18 ? 0.6 : 0),
-}));
-
-// Distribuição de status agregada
-const statusDistribution = [
-  { name: "Sucesso", value: 248, fill: "var(--color-success)" },
-  { name: "Falha", value: 9, fill: "var(--color-failed)" },
-  { name: "Cancelado", value: 4, fill: "var(--color-cancelled)" },
-  { name: "Em fila", value: 23, fill: "var(--color-queued)" },
-];
-
-// Saúde por workflow (cada workflow tem N buckets — uptime por intervalo)
-function generateBuckets(count: number, failRate: number): StatusBucket[] {
-  return Array.from({ length: count }, () => {
-    const r = Math.random();
-    if (r < failRate) return "fail";
-    if (r < failRate + 0.05) return "warn";
-    if (r < failRate + 0.07) return "empty";
-    return "ok";
-  });
-}
-
-const workflowHealth = [
-  { name: "Onboarding de lead", uptime: "99,8%", buckets: generateBuckets(60, 0.01) },
-  { name: "Notificar churn risk", uptime: "98,2%", buckets: generateBuckets(60, 0.04) },
-  { name: "Sincronizar CRM", uptime: "94,5%", buckets: generateBuckets(60, 0.09) },
-  { name: "Resumo semanal", uptime: "100%", buckets: generateBuckets(60, 0) },
-  { name: "Enriquecer lead", uptime: "97,1%", buckets: generateBuckets(60, 0.05) },
-];
-
-const recent = [
-  { name: "Onboarding de lead", status: "Ativo", runs: 142 },
-  { name: "Notificar churn risk", status: "Ativo", runs: 87 },
-  { name: "Sincronizar CRM", status: "Pausado", runs: 23 },
-  { name: "Resumo semanal", status: "Ativo", runs: 7 },
-];
+const HEALTH_BUCKETS = 120; // ~ últimas 2h em janelas de 1 min
+const HEALTH_BUCKET_MS = 60_000;
+const EXECUTIONS_HOURS = 24;
+const TOP_WORKFLOWS = 8; // quantos workflows aparecem na seção de saúde
 
 /* -------------------------------------------------------------------------- */
 /* Configs de chart                                                            */
@@ -131,13 +84,243 @@ const statusConfig = {
   failed: { label: "Falha", color: "var(--chart-3)" },
   cancelled: { label: "Cancelado", color: "var(--chart-4)" },
   queued: { label: "Em fila", color: "var(--chart-1)" },
+  running: { label: "Em execução", color: "var(--chart-1)" },
 } satisfies ChartConfig;
+
+/* -------------------------------------------------------------------------- */
+/* Helpers de agregação                                                        */
+/* -------------------------------------------------------------------------- */
+
+function timestampOf(run: WorkflowRun): number {
+  const ref = run.finishedAt ?? run.startedAt ?? run.createdAt;
+  return ref ? new Date(ref).getTime() : 0;
+}
+
+function bucketsFromRuns(runs: WorkflowRun[], count: number, bucketMs: number): StatusBucket[] {
+  const now = Date.now();
+  const buckets: StatusBucket[] = Array.from({ length: count }, () => "empty");
+
+  for (const run of runs) {
+    const ts = timestampOf(run);
+    if (!ts) continue;
+    const ageMs = now - ts;
+    const idx = count - 1 - Math.floor(ageMs / bucketMs);
+    if (idx < 0 || idx >= count) continue;
+
+    // Resolve conflito quando vários runs caem no mesmo bucket: pior status ganha.
+    const current = buckets[idx];
+    const next = severityOf(run.status);
+    if (severityRank(next) > severityRank(current)) buckets[idx] = next;
+  }
+  return buckets;
+}
+
+function severityOf(status: RunStatus): StatusBucket {
+  if (status === "failed") return "fail";
+  if (status === "cancelled") return "warn";
+  if (status === "success") return "ok";
+  // running / queued ainda não terminaram — tratamos como "ok" (operacional)
+  return "ok";
+}
+
+function severityRank(b: StatusBucket): number {
+  switch (b) {
+    case "fail":
+      return 3;
+    case "warn":
+      return 2;
+    case "ok":
+      return 1;
+    case "empty":
+      return 0;
+  }
+}
+
+function uptimeOf(buckets: StatusBucket[]): string {
+  const known = buckets.filter((b) => b !== "empty");
+  if (known.length === 0) return "—";
+  const okish = known.filter((b) => b === "ok").length;
+  const pct = (okish / known.length) * 100;
+  return `${pct.toFixed(pct === 100 ? 0 : 1)}%`;
+}
+
+function executionsByHour(allRuns: WorkflowRun[]) {
+  const now = new Date();
+  const startMs = now.getTime() - EXECUTIONS_HOURS * 3600_000;
+
+  const slots = Array.from({ length: EXECUTIONS_HOURS }, (_, i) => {
+    const d = new Date(startMs + i * 3600_000);
+    return {
+      hour: `${String(d.getHours()).padStart(2, "0")}h`,
+      success: 0,
+      failed: 0,
+    };
+  });
+
+  for (const run of allRuns) {
+    const ts = timestampOf(run);
+    if (!ts || ts < startMs) continue;
+    const idx = Math.floor((ts - startMs) / 3600_000);
+    if (idx < 0 || idx >= slots.length) continue;
+    if (run.status === "failed") slots[idx].failed += 1;
+    else if (run.status === "success") slots[idx].success += 1;
+  }
+  return slots;
+}
+
+function statusDistribution(allRuns: WorkflowRun[]) {
+  const counts: Record<string, number> = {};
+  for (const r of allRuns) counts[r.status] = (counts[r.status] ?? 0) + 1;
+
+  const order: { key: RunStatus; label: string; fill: string }[] = [
+    { key: "success", label: "Sucesso", fill: "var(--color-success)" },
+    { key: "failed", label: "Falha", fill: "var(--color-failed)" },
+    { key: "cancelled", label: "Cancelado", fill: "var(--color-cancelled)" },
+    { key: "queued", label: "Em fila", fill: "var(--color-queued)" },
+    { key: "running", label: "Em execução", fill: "var(--color-running)" },
+  ];
+
+  return order
+    .map((o) => ({ name: o.label, value: counts[o.key] ?? 0, fill: o.fill }))
+    .filter((d) => d.value > 0);
+}
+
+function latencySeries(allRuns: WorkflowRun[]) {
+  // Últimas 24 janelas de 5 min (~2h) — média de duração de runs finalizados.
+  const slots = 24;
+  const bucketMs = 5 * 60_000;
+  const now = Date.now();
+  const startMs = now - slots * bucketMs;
+
+  type Acc = { sum: number; count: number };
+  const acc: Acc[] = Array.from({ length: slots }, () => ({ sum: 0, count: 0 }));
+
+  for (const r of allRuns) {
+    if (!r.startedAt || !r.finishedAt) continue;
+    const start = new Date(r.startedAt).getTime();
+    const end = new Date(r.finishedAt).getTime();
+    if (end < startMs) continue;
+    const idx = Math.floor((end - startMs) / bucketMs);
+    if (idx < 0 || idx >= slots) continue;
+    acc[idx].sum += (end - start) / 1000;
+    acc[idx].count += 1;
+  }
+
+  return acc.map((a, i) => ({
+    bucket: `${i * 5}m`,
+    avg: a.count > 0 ? Number((a.sum / a.count).toFixed(2)) : 0,
+  }));
+}
+
+function avgDurationSeconds(allRuns: WorkflowRun[]): number | null {
+  const finished = allRuns.filter((r) => r.startedAt && r.finishedAt);
+  if (finished.length === 0) return null;
+  const sum = finished.reduce((acc, r) => {
+    return acc + (new Date(r.finishedAt!).getTime() - new Date(r.startedAt!).getTime()) / 1000;
+  }, 0);
+  return sum / finished.length;
+}
+
+function successRate(allRuns: WorkflowRun[]): number | null {
+  const terminal = allRuns.filter((r) => r.status === "success" || r.status === "failed");
+  if (terminal.length === 0) return null;
+  const ok = terminal.filter((r) => r.status === "success").length;
+  return (ok / terminal.length) * 100;
+}
+
+function executionsToday(allRuns: WorkflowRun[]): number {
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const startMs = start.getTime();
+  return allRuns.filter((r) => timestampOf(r) >= startMs).length;
+}
 
 /* -------------------------------------------------------------------------- */
 /* Página                                                                      */
 /* -------------------------------------------------------------------------- */
 
 export default function DashboardRoute() {
+  const workflowsQuery = useQuery({
+    queryKey: queryKeys.workflows.list(null, 0),
+    queryFn: () => workflowsApi.list({ limit: 100, offset: 0 }),
+  });
+
+  const workflows = workflowsQuery.data?.items ?? [];
+  const topWorkflows = workflows.slice(0, TOP_WORKFLOWS);
+
+  // Uma query de runs por workflow do "top". useQueries permite paralelizar.
+  const runsQueries = useQueries({
+    queries: topWorkflows.map((w) => ({
+      queryKey: queryKeys.runs.list(w.id),
+      queryFn: () => runsApi.list(w.id, { limit: 100 }),
+      enabled: !!w.id,
+    })),
+  });
+
+  const runsByWorkflow = useMemo(() => {
+    const map = new Map<string, WorkflowRun[]>();
+    topWorkflows.forEach((w, i) => {
+      map.set(w.id, runsQueries[i]?.data ?? []);
+    });
+    return map;
+  }, [topWorkflows, runsQueries]);
+
+  const allRuns = useMemo(() => {
+    return Array.from(runsByWorkflow.values()).flat();
+  }, [runsByWorkflow]);
+
+  const isLoading = workflowsQuery.isPending || runsQueries.some((q) => q.isPending);
+
+  // KPIs derivados
+  const activeCount = workflows.filter((w) => w.status === "active").length;
+  const execsToday = executionsToday(allRuns);
+  const sucRate = successRate(allRuns);
+  const avgDur = avgDurationSeconds(allRuns);
+
+  const stats = [
+    {
+      label: "Workflows ativos",
+      value: workflowsQuery.isPending ? "…" : String(activeCount),
+      hint: `${workflows.length} no total`,
+      icon: Workflow,
+    },
+    {
+      label: "Execuções hoje",
+      value: isLoading ? "…" : String(execsToday),
+      hint: `${allRuns.length} nos últimos`,
+      icon: PlayCircle,
+    },
+    {
+      label: "Taxa de sucesso",
+      value: isLoading ? "…" : sucRate === null ? "—" : `${sucRate.toFixed(1)}%`,
+      hint: "Sobre runs finalizados",
+      icon: CheckCircle2,
+    },
+    {
+      label: "Tempo médio",
+      value: isLoading ? "…" : avgDur === null ? "—" : `${avgDur.toFixed(2)}s`,
+      hint: "Por execução",
+      icon: Clock,
+    },
+  ];
+
+  const executionsData = useMemo(() => executionsByHour(allRuns), [allRuns]);
+  const statusData = useMemo(() => statusDistribution(allRuns), [allRuns]);
+  const latencyData = useMemo(() => latencySeries(allRuns), [allRuns]);
+
+  const workflowHealth = topWorkflows.map((w) => {
+    const buckets = bucketsFromRuns(
+      runsByWorkflow.get(w.id) ?? [],
+      HEALTH_BUCKETS,
+      HEALTH_BUCKET_MS,
+    );
+    return { workflow: w, buckets, uptime: uptimeOf(buckets) };
+  });
+
+  const recent = [...workflows]
+    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+    .slice(0, 4);
+
   return (
     <>
       <div className="flex items-center justify-between gap-4">
@@ -170,7 +353,7 @@ export default function DashboardRoute() {
         ))}
       </div>
 
-      {/* Gráfico de execuções + distribuição */}
+      {/* Execuções 24h + distribuição */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
@@ -178,59 +361,74 @@ export default function DashboardRoute() {
             <CardDescription>Sucesso vs falha por hora.</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={executionsConfig} className="h-[240px] w-full">
-              <BarChart data={executionsByHour} barCategoryGap={4}>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="hour"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  interval={2}
-                />
-                <YAxis tickLine={false} axisLine={false} tickMargin={8} width={28} />
-                <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
-                <Bar dataKey="success" stackId="a" fill="var(--color-success)" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="failed" stackId="a" fill="var(--color-failed)" radius={[3, 3, 0, 0]} />
-              </BarChart>
-            </ChartContainer>
+            {isLoading ? (
+              <Skeleton className="h-[240px] w-full" />
+            ) : (
+              <ChartContainer config={executionsConfig} className="h-[240px] w-full">
+                <BarChart data={executionsData} barCategoryGap={4}>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="hour"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    interval={2}
+                  />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} width={28} />
+                  <ChartTooltip content={<ChartTooltipContent indicator="dot" />} />
+                  <Bar dataKey="success" stackId="a" fill="var(--color-success)" />
+                  <Bar
+                    dataKey="failed"
+                    stackId="a"
+                    fill="var(--color-failed)"
+                    radius={[3, 3, 0, 0]}
+                  />
+                </BarChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader>
             <CardTitle>Distribuição de status</CardTitle>
-            <CardDescription>Últimas 24h.</CardDescription>
+            <CardDescription>Sobre os runs carregados.</CardDescription>
           </CardHeader>
           <CardContent className="flex items-center justify-center">
-            <ChartContainer config={statusConfig} className="h-[240px] w-full">
-              <PieChart>
-                <ChartTooltip content={<ChartTooltipContent hideLabel />} />
-                <Pie
-                  data={statusDistribution}
-                  dataKey="value"
-                  nameKey="name"
-                  innerRadius={50}
-                  outerRadius={80}
-                  paddingAngle={2}
-                >
-                  {statusDistribution.map((entry) => (
-                    <Cell key={entry.name} fill={entry.fill} />
-                  ))}
-                </Pie>
-              </PieChart>
-            </ChartContainer>
+            {isLoading ? (
+              <Skeleton className="size-[200px] rounded-full" />
+            ) : statusData.length === 0 ? (
+              <EmptyHint label="Nenhuma execução ainda." />
+            ) : (
+              <ChartContainer config={statusConfig} className="h-[240px] w-full">
+                <PieChart>
+                  <ChartTooltip content={<ChartTooltipContent hideLabel />} />
+                  <Pie
+                    data={statusData}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius={50}
+                    outerRadius={80}
+                    paddingAngle={2}
+                  >
+                    {statusData.map((entry) => (
+                      <Cell key={entry.name} fill={entry.fill} />
+                    ))}
+                  </Pie>
+                </PieChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
       </div>
 
-      {/* Saúde dos workflows (status bars) */}
+      {/* Saúde dos workflows */}
       <Card>
         <CardHeader className="flex-row items-center justify-between space-y-0">
           <div>
             <CardTitle>Saúde dos workflows</CardTitle>
             <CardDescription>
-              Últimos 60 minutos — cada barra representa 1 minuto.
+              Últimos {HEALTH_BUCKETS} minutos — cada barra representa 1 minuto.
             </CardDescription>
           </div>
           <div className="flex items-center gap-3 text-xs text-muted-foreground">
@@ -240,54 +438,69 @@ export default function DashboardRoute() {
             <Legend color="bg-muted" label="Sem dados" />
           </div>
         </CardHeader>
-        <CardContent className="space-y-4">
-          {workflowHealth.map((w) => (
-            <div key={w.name} className="space-y-1.5">
-              <div className="flex items-center justify-between text-sm">
-                <span className="font-medium">{w.name}</span>
-                <span className="text-muted-foreground tabular-nums">{w.uptime}</span>
+        <CardContent className="space-y-3">
+          {workflowsQuery.isPending ? (
+            <HealthSkeleton />
+          ) : workflowHealth.length === 0 ? (
+            <EmptyHint label="Nenhum workflow cadastrado." />
+          ) : (
+            workflowHealth.map((h) => (
+              <div key={h.workflow.id} className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <Link
+                    to={`/flow/${h.workflow.id}`}
+                    className="truncate font-medium hover:underline"
+                  >
+                    {h.workflow.name}
+                  </Link>
+                  <span className="text-muted-foreground tabular-nums">{h.uptime}</span>
+                </div>
+                <StatusBars buckets={h.buckets} />
               </div>
-              <StatusBars buckets={w.buckets} />
-            </div>
-          ))}
+            ))
+          )}
         </CardContent>
       </Card>
 
-      {/* Latência + workflows recentes */}
+      {/* Latência + recentes */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Tempo médio de execução</CardTitle>
-            <CardDescription>Últimas 2 horas.</CardDescription>
+            <CardDescription>Últimas 2 horas em janelas de 5 min.</CardDescription>
           </CardHeader>
           <CardContent>
-            <ChartContainer config={latencyConfig} className="h-[200px] w-full">
-              <AreaChart data={latencySeries}>
-                <defs>
-                  <linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="var(--color-avg)" stopOpacity={0.4} />
-                    <stop offset="100%" stopColor="var(--color-avg)" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid vertical={false} strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="bucket"
-                  tickLine={false}
-                  axisLine={false}
-                  tickMargin={8}
-                  interval={3}
-                />
-                <YAxis tickLine={false} axisLine={false} tickMargin={8} width={28} />
-                <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
-                <Area
-                  type="monotone"
-                  dataKey="avg"
-                  stroke="var(--color-avg)"
-                  fill="url(#latencyFill)"
-                  strokeWidth={2}
-                />
-              </AreaChart>
-            </ChartContainer>
+            {isLoading ? (
+              <Skeleton className="h-[200px] w-full" />
+            ) : (
+              <ChartContainer config={latencyConfig} className="h-[200px] w-full">
+                <AreaChart data={latencyData}>
+                  <defs>
+                    <linearGradient id="latencyFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="var(--color-avg)" stopOpacity={0.4} />
+                      <stop offset="100%" stopColor="var(--color-avg)" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid vertical={false} strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="bucket"
+                    tickLine={false}
+                    axisLine={false}
+                    tickMargin={8}
+                    interval={3}
+                  />
+                  <YAxis tickLine={false} axisLine={false} tickMargin={8} width={28} />
+                  <ChartTooltip content={<ChartTooltipContent indicator="line" />} />
+                  <Area
+                    type="monotone"
+                    dataKey="avg"
+                    stroke="var(--color-avg)"
+                    fill="url(#latencyFill)"
+                    strokeWidth={2}
+                  />
+                </AreaChart>
+              </ChartContainer>
+            )}
           </CardContent>
         </Card>
 
@@ -295,7 +508,7 @@ export default function DashboardRoute() {
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <div>
               <CardTitle>Workflows recentes</CardTitle>
-              <CardDescription>Últimas 24h.</CardDescription>
+              <CardDescription>Atualizados por último.</CardDescription>
             </div>
             <Button variant="ghost" size="sm" asChild>
               <Link to="/dashboard/workflows">
@@ -304,36 +517,36 @@ export default function DashboardRoute() {
             </Button>
           </CardHeader>
           <CardContent>
-            <ul className="divide-y">
-              {recent.map((w) => (
-                <li
-                  key={w.name}
-                  className="flex items-center justify-between py-3 text-sm"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="grid size-8 place-items-center rounded-md border bg-muted">
-                      <Workflow className="size-4 text-muted-foreground" />
-                    </div>
-                    <div>
-                      <div className="font-medium">{w.name}</div>
-                      <div className="text-xs text-muted-foreground">
-                        {w.runs} execuções
-                      </div>
-                    </div>
-                  </div>
-                  <span
-                    className={
-                      "rounded-md border px-2 py-0.5 text-xs " +
-                      (w.status === "Ativo"
-                        ? "border-transparent bg-primary/10 text-foreground"
-                        : "text-muted-foreground")
-                    }
+            {workflowsQuery.isPending ? (
+              <RecentSkeleton />
+            ) : recent.length === 0 ? (
+              <EmptyHint label="Nenhum workflow ainda." />
+            ) : (
+              <ul className="divide-y">
+                {recent.map((w) => (
+                  <li
+                    key={w.id}
+                    className="flex items-center justify-between gap-2 py-3 text-sm"
                   >
-                    {w.status}
-                  </span>
-                </li>
-              ))}
-            </ul>
+                    <Link
+                      to={`/flow/${w.id}`}
+                      className="flex min-w-0 items-center gap-3 hover:underline"
+                    >
+                      <div className="grid size-8 shrink-0 place-items-center rounded-md border bg-muted">
+                        <Workflow className="size-4 text-muted-foreground" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="truncate font-medium">{w.name}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {(runsByWorkflow.get(w.id) ?? []).length} execuções
+                        </div>
+                      </div>
+                    </Link>
+                    <StatusBadge status={w.status} />
+                  </li>
+                ))}
+              </ul>
+            )}
           </CardContent>
         </Card>
       </div>
@@ -341,11 +554,64 @@ export default function DashboardRoute() {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Subcomponentes                                                              */
+/* -------------------------------------------------------------------------- */
+
 function Legend({ color, label }: { color: string; label: string }) {
   return (
     <div className="flex items-center gap-1.5">
       <span className={`size-2 rounded-sm ${color}`} />
       <span>{label}</span>
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: WorkflowSummary["status"] }) {
+  const meta: Record<WorkflowSummary["status"], { label: string; cn: string }> = {
+    active: { label: "Ativo", cn: "border-transparent bg-primary/10 text-foreground" },
+    paused: { label: "Pausado", cn: "text-muted-foreground" },
+    draft: { label: "Rascunho", cn: "text-muted-foreground" },
+    archived: { label: "Arquivado", cn: "text-muted-foreground" },
+  };
+  const m = meta[status];
+  return <span className={`rounded-md border px-2 py-0.5 text-xs ${m.cn}`}>{m.label}</span>;
+}
+
+function HealthSkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="space-y-1">
+          <div className="flex justify-between">
+            <Skeleton className="h-3 w-32" />
+            <Skeleton className="h-3 w-10" />
+          </div>
+          <Skeleton className="h-[18px] w-full" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecentSkeleton() {
+  return (
+    <div className="space-y-3">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="flex items-center gap-3">
+          <Skeleton className="size-8 rounded-md" />
+          <div className="flex-1 space-y-1">
+            <Skeleton className="h-3 w-40" />
+            <Skeleton className="h-3 w-20" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function EmptyHint({ label }: { label: string }) {
+  return (
+    <p className="py-8 text-center text-sm text-muted-foreground">{label}</p>
   );
 }

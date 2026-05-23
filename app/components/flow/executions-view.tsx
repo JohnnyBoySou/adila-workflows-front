@@ -259,15 +259,12 @@ function RunDetailPanel({
   const steps = stepsQuery.data ?? [];
 
   // Espelha os steps deste run no store de execução para o canvas pintar
-  // os nós. Limpa ao desmontar (fechar o painel).
+  // os nós e o inspector lateral exibir input/output. Limpa ao desmontar
+  // (fechar o painel) — o inspector fecha junto.
   const setFocused = useExecutionStore((s) => s.setFocused);
   const clearExecution = useExecutionStore((s) => s.clear);
   useEffect(() => {
-    const statuses = steps.reduce<Record<string, RunStep["status"]>>((acc, s) => {
-      acc[s.nodeId] = s.status;
-      return acc;
-    }, {});
-    setFocused(runId, statuses);
+    setFocused(runId, steps);
     return () => clearExecution();
   }, [runId, steps, setFocused, clearExecution]);
 

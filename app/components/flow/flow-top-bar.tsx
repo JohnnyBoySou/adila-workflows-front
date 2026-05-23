@@ -1,12 +1,22 @@
 import { Link } from "react-router";
-import { Check, ChevronLeft, History, Info, Loader2, PenLine, Play, Save } from "lucide-react";
+import {
+  Check,
+  ChevronLeft,
+  History,
+  Info,
+  Loader2,
+  PenLine,
+  Play,
+  Save,
+  Webhook,
+} from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { cn } from "~/lib/utils";
 
-export type FlowTab = "editor" | "executions";
+export type FlowTab = "editor" | "executions" | "triggers";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -105,6 +115,14 @@ export function FlowTopBar({
                   <span className="relative inline-flex size-2 rounded-full bg-sky-500" />
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger
+              value="triggers"
+              className="size-7 rounded-full p-0"
+              aria-label="Triggers"
+              title="Triggers"
+            >
+              <Webhook className="size-4" />
             </TabsTrigger>
           </TabsList>
         </Tabs>

@@ -28,4 +28,8 @@ export const queryKeys = {
     steps: (workflowId: string, runId: string) =>
       ["runs", "steps", workflowId, runId] as const,
   },
+  triggers: {
+    all: ["triggers"] as const,
+    list: (workflowId: string) => ["triggers", "list", workflowId] as const,
+  },
 } as const;

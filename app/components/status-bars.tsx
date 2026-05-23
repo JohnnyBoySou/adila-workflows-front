@@ -5,11 +5,11 @@ export type StatusBucket = "ok" | "warn" | "fail" | "empty";
 export type StatusBarsProps = {
   buckets: StatusBucket[];
   className?: string;
-  /** Altura de cada barra em px. Default: 28. */
+  /** Altura de cada barra em px. Default: 18. */
   height?: number;
-  /** Largura mínima de cada barra em px. Default: 4. */
+  /** Largura mínima de cada barra em px. Default: 2. */
   minBarWidth?: number;
-  /** Espaço entre barras em px. Default: 2. */
+  /** Espaço entre barras em px. Default: 1. */
   gap?: number;
 };
 
@@ -36,9 +36,9 @@ const LABELS: Record<StatusBucket, string> = {
 export function StatusBars({
   buckets,
   className,
-  height = 28,
-  minBarWidth = 4,
-  gap = 2,
+  height = 18,
+  minBarWidth = 2,
+  gap = 1,
 }: StatusBarsProps) {
   return (
     <div
