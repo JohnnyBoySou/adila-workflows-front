@@ -1,0 +1,23 @@
+/**
+ * Query keys centralizadas.
+ *
+ * Manter as chaves aqui evita strings soltas espalhadas e dá um único ponto
+ * para invalidar caches de forma consistente. Cada função devolve um array
+ * compatível com `useQuery({ queryKey: ... })` e `invalidateQueries`.
+ */
+
+export const queryKeys = {
+  folders: {
+    all: ["folders"] as const,
+    list: (parentId: string | null) => ["folders", "list", parentId ?? "root"] as const,
+    detail: (id: string) => ["folders", "detail", id] as const,
+    /** Cadeia de ancestrais — usada no breadcrumb da listagem. */
+    path: (folderId: string | null) => ["folders", "path", folderId ?? "root"] as const,
+  },
+  workflows: {
+    all: ["workflows"] as const,
+    list: (folderId: string | null, page: number) =>
+      ["workflows", "list", folderId ?? "root", page] as const,
+    detail: (id: string) => ["workflows", "detail", id] as const,
+  },
+} as const;

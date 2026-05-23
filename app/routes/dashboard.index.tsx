@@ -15,7 +15,6 @@ export function meta({}: Route.MetaArgs) {
 
 export const handle: DashboardHandle = {
   title: "Dashboard",
-  breadcrumb: "Workflows",
 };
 
 type Stat = {

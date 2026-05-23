@@ -9,10 +9,15 @@ import {
   useNavigate,
 } from "react-router";
 
+import { QueryClientProvider } from "@tanstack/react-query";
+
 import type { Route } from "./+types/root";
 import "./app.css";
 import { onUnauthorized } from "~/services";
+import { queryClient } from "~/lib/query-client";
 import { TooltipProvider } from "~/components/ui/tooltip";
+import { ThemeScript } from "~/components/theme-script";
+import { useApplyTheme } from "~/stores/theme";
 
 export const links: Route.LinksFunction = () => [];
 
@@ -24,6 +29,8 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <Meta />
         <Links />
+        {/* Aplica o tema antes do React hidratar — evita FOUC entre claro/escuro. */}
+        <ThemeScript />
       </head>
       <body>
         {children}
@@ -37,6 +44,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   const navigate = useNavigate();
 
+  // Sincroniza a classe `.dark` no <html> com a store de tema (zustand).
+  useApplyTheme();
+
   // Centraliza a reação a respostas 401 do backend: o cliente $fetch já limpa
   // o token; aqui mandamos o usuário pra tela de login.
   useEffect(() => {
@@ -48,9 +58,11 @@ export default function App() {
   // a prop `tooltip` (usada no AppShell quando a sidebar está colapsada)
   // renderiza um Tooltip do Radix internamente.
   return (
-    <TooltipProvider delayDuration={150}>
-      <Outlet />
-    </TooltipProvider>
+    <QueryClientProvider client={queryClient}>
+      <TooltipProvider delayDuration={150}>
+        <Outlet />
+      </TooltipProvider>
+    </QueryClientProvider>
   );
 }
 

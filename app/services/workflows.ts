@@ -1,8 +1,9 @@
 /**
  * Service de workflows.
  *
- * Exemplo de service de domínio: todas as chamadas passam pelo `$fetch`
- * configurado em `~/services` — sem refazer baseURL, headers ou auth aqui.
+ * Wrapper fino por cima do `$fetch` configurado em `~/services`. Reflete o
+ * shape real do backend (Elysia / Drizzle) — não adicionar campos que não
+ * existem no servidor.
  */
 import { $fetch, unwrap } from "./index";
 
@@ -10,78 +11,70 @@ import { $fetch, unwrap } from "./index";
 /* Tipos                                                                       */
 /* -------------------------------------------------------------------------- */
 
-export type WorkflowStatus = "active" | "paused" | "draft";
+export type WorkflowStatus = "draft" | "active" | "paused" | "archived";
 
-/** Ambientes lógicos onde workflows são executados. */
-export type EnvironmentId = "production" | "staging" | "development";
-
-export type Environment = {
-  id: EnvironmentId;
-  name: string;
-};
-
-/**
- * Pasta dentro de um ambiente. `parentId` define a hierarquia.
- * Pastas raiz têm `parentId: null`.
- */
-export type Folder = {
-  id: string;
-  name: string;
-  parentId: string | null;
-  environmentId: EnvironmentId;
-  updatedAt: string;
-};
-
+/** Resumo retornado pela rota de listagem (linha da tabela `workflows`). */
 export type WorkflowSummary = {
   id: string;
-  name: string;
-  status: WorkflowStatus;
-  runsLast24h: number;
-  lastRunAt: string | null;
-  updatedAt: string;
+  organizationId: string;
   folderId: string | null;
-  environmentId: EnvironmentId;
-};
-
-export type WorkflowNode = {
-  id: string;
-  type: string;
-  position: { x: number; y: number };
-  data: Record<string, unknown>;
-};
-
-export type WorkflowEdge = {
-  id: string;
-  source: string;
-  target: string;
-};
-
-export type Workflow = {
-  id: string;
   name: string;
+  description: string | null;
   status: WorkflowStatus;
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
+  createdBy: string;
   createdAt: string;
   updatedAt: string;
 };
 
-export type CreateWorkflowInput = {
-  name: string;
-  nodes?: WorkflowNode[];
-  edges?: WorkflowEdge[];
+export type Workflow = WorkflowSummary & {
+  definition: Record<string, unknown>;
 };
 
-export type UpdateWorkflowInput = Partial<CreateWorkflowInput> & {
+export type ListWorkflowsParams = {
+  limit?: number;
+  offset?: number;
   status?: WorkflowStatus;
+  /** `"root"` → workflows sem pasta; UUID → workflows de uma pasta. */
+  folderId?: string | "root";
+};
+
+export type Paginated<T> = {
+  items: T[];
+  total: number;
+  limit: number;
+  offset: number;
+};
+
+export type CreateWorkflowInput = {
+  name: string;
+  description?: string;
+  folderId?: string | null;
+  definition?: Record<string, unknown>;
+};
+
+export type UpdateWorkflowInput = {
+  name?: string;
+  description?: string | null;
+  status?: WorkflowStatus;
+  folderId?: string | null;
+  definition?: Record<string, unknown>;
 };
 
 /* -------------------------------------------------------------------------- */
 /* Chamadas                                                                    */
 /* -------------------------------------------------------------------------- */
 
-export function list(): Promise<WorkflowSummary[]> {
-  return unwrap($fetch<WorkflowSummary[]>("/workflows"));
+export function list(params: ListWorkflowsParams = {}): Promise<Paginated<WorkflowSummary>> {
+  return unwrap(
+    $fetch<Paginated<WorkflowSummary>>("/workflows", {
+      query: {
+        ...(params.limit !== undefined && { limit: params.limit }),
+        ...(params.offset !== undefined && { offset: params.offset }),
+        ...(params.status && { status: params.status }),
+        ...(params.folderId && { folderId: params.folderId }),
+      },
+    }),
+  );
 }
 
 export function get(id: string): Promise<Workflow> {
@@ -115,10 +108,14 @@ export function remove(id: string): Promise<void> {
 }
 
 /** Dispara uma execução manual do workflow. */
-export function run(id: string): Promise<{ runId: string }> {
+export function run(
+  id: string,
+  opts: { environmentId?: string; input?: Record<string, unknown> } = {},
+): Promise<{ runId: string; jobId?: string }> {
   return unwrap(
-    $fetch<{ runId: string }>(`/workflows/${id}/run`, {
+    $fetch<{ runId: string; jobId?: string }>(`/workflows/${id}/run`, {
       method: "POST",
+      body: opts,
     }),
   );
 }

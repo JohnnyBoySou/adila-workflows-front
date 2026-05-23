@@ -1,5 +1,7 @@
+import { Fragment } from "react";
 import { Link, useLocation, useNavigate } from "react-router";
 import {
+  ArrowLeft,
   ChevronsUpDown,
   LayoutDashboard,
   LifeBuoy,
@@ -8,9 +10,22 @@ import {
   User,
   Workflow,
 } from "lucide-react";
+import { motion } from "framer-motion";
+
+import { OrgSwitcher } from "~/components/org-switcher";
 
 import { authClient, useSession } from "~/lib/auth-client";
+import { cn } from "~/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
+import {
+  Breadcrumb,
+  BreadcrumbItem,
+  BreadcrumbLink,
+  BreadcrumbList,
+  BreadcrumbPage,
+  BreadcrumbSeparator,
+} from "~/components/ui/breadcrumb";
+import { Button } from "~/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -51,15 +66,26 @@ const primaryNav: NavItem[] = [
 
 const secondaryNav: NavItem[] = [{ title: "Suporte", to: "#", icon: LifeBuoy }];
 
+/** Item da cadeia de breadcrumbs do header. Sem `to` = nó folha (não-clicável). */
+export type Crumb = {
+  label: string;
+  to?: string;
+};
+
 export function AppShell({
   children,
-  title,
-  breadcrumb,
+  title: _title,
+  crumbs,
 }: {
   children: React.ReactNode;
   title: string;
-  breadcrumb?: string;
+  crumbs: Crumb[];
 }) {
+  const navigate = useNavigate();
+  // Botão de voltar só aparece quando há para onde voltar — quando a cadeia
+  // tem ao menos uma crumb com `to` antes da folha (ou seja, profundidade ≥ 2).
+  const canGoBack = crumbs.filter((c) => c.to).length > 0 && crumbs.length > 1;
+
   return (
     <SidebarProvider>
       <AppSidebar />
@@ -67,11 +93,40 @@ export function AppShell({
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">
           <SidebarTrigger className="-ml-1" />
           <Separator orientation="vertical" className="mr-2 h-4" />
-          <nav className="flex items-center gap-1.5 text-sm">
-            <span className="text-muted-foreground">{breadcrumb ?? "App"}</span>
-            <span className="text-muted-foreground">/</span>
-            <span className="font-medium">{title}</span>
-          </nav>
+          {canGoBack && (
+            <>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                aria-label="Voltar"
+                onClick={() => navigate(-1)}
+              >
+                <ArrowLeft className="size-4" />
+              </Button>
+              <Separator orientation="vertical" className="mx-1 h-4" />
+            </>
+          )}
+          <Breadcrumb>
+            <BreadcrumbList>
+              {crumbs.map((c, i) => {
+                const isLast = i === crumbs.length - 1;
+                return (
+                  <Fragment key={`${c.label}-${c.to ?? i}`}>
+                    {i > 0 && <BreadcrumbSeparator />}
+                    <BreadcrumbItem>
+                      {isLast || !c.to ? (
+                        <BreadcrumbPage>{c.label}</BreadcrumbPage>
+                      ) : (
+                        <BreadcrumbLink asChild>
+                          <Link to={c.to}>{c.label}</Link>
+                        </BreadcrumbLink>
+                      )}
+                    </BreadcrumbItem>
+                  </Fragment>
+                );
+              })}
+            </BreadcrumbList>
+          </Breadcrumb>
         </header>
         <div className="flex flex-1 flex-col gap-4 p-4 md:p-6">{children}</div>
       </SidebarInset>
@@ -101,21 +156,7 @@ function AppSidebar() {
   return (
     <Sidebar collapsible="icon">
       <SidebarHeader>
-        <SidebarMenu>
-          <SidebarMenuItem>
-            <SidebarMenuButton size="lg" asChild>
-              <Link to="/dashboard">
-                <div className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground">
-                  <Workflow className="size-4" />
-                </div>
-                <div className="grid flex-1 text-left text-sm leading-tight">
-                  <span className="truncate font-semibold">Workflows</span>
-                  <span className="truncate text-xs text-muted-foreground">Workspace</span>
-                </div>
-              </Link>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-        </SidebarMenu>
+        <OrgSwitcher />
       </SidebarHeader>
 
       <SidebarContent>
@@ -123,16 +164,37 @@ function AppSidebar() {
           <SidebarGroupLabel>Plataforma</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {primaryNav.map((item) => (
-                <SidebarMenuItem key={item.to}>
-                  <SidebarMenuButton asChild isActive={isActive(item.to)} tooltip={item.title}>
-                    <Link to={item.to}>
-                      <item.icon className="size-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
+              {primaryNav.map((item) => {
+                const active = isActive(item.to);
+                return (
+                  <SidebarMenuItem key={item.to}>
+                    {/* Pílula deslizante: o `layoutId` compartilhado faz o framer-motion
+                        animar a posição/tamanho ao trocar de rota. Anulamos o bg padrão
+                        do `data-active` no botão para deixar essa pílula ser o destaque. */}
+                    {active && (
+                      <motion.div
+                        layoutId="sidebar-active-pill"
+                        className="absolute inset-0 z-0 rounded-md bg-sidebar-accent"
+                        transition={{ type: "spring", stiffness: 380, damping: 32, mass: 0.6 }}
+                      />
+                    )}
+                    <SidebarMenuButton
+                      asChild
+                      isActive={active}
+                      tooltip={item.title}
+                      className={cn(
+                        "relative z-10 transition-opacity data-active:bg-transparent",
+                        !active && "opacity-55 hover:opacity-100",
+                      )}
+                    >
+                      <Link to={item.to}>
+                        <item.icon className="size-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                );
+              })}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -142,7 +204,11 @@ function AppSidebar() {
             <SidebarMenu>
               {secondaryNav.map((item) => (
                 <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild tooltip={item.title}>
+                  <SidebarMenuButton
+                    asChild
+                    tooltip={item.title}
+                    className="opacity-55 transition-opacity hover:opacity-100"
+                  >
                     <a href={item.to}>
                       <item.icon className="size-4" />
                       <span>{item.title}</span>

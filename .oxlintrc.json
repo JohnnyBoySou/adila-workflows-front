@@ -45,6 +45,8 @@
     "react-perf/jsx-no-jsx-as-prop": "off",
     "jsx-a11y/anchor-is-valid": "warn",
     "jsx-a11y/prefer-tag-over-role": "off",
+    "jsx-a11y/anchor-has-content": "off",
+    "jsx-a11y/no-redundant-roles": "off",
     "import/no-duplicates": "error",
     "import/no-self-import": "error",
     "import/no-unassigned-import": "off",
