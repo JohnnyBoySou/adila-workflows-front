@@ -6,6 +6,7 @@ import {
   Database,
   GitBranch,
   Search,
+  Sparkles,
   StickyNote,
   Workflow as WorkflowIcon,
   Zap,
@@ -61,6 +62,11 @@ const CATEGORY_META: Record<NodeCategory, CategoryMeta> = {
     icon: Database,
     color: "text-violet-500",
     description: "Manipulação e transformação",
+  },
+  IA: {
+    icon: Sparkles,
+    color: "text-fuchsia-500",
+    description: "Chat, embeddings, vetor e memória",
   },
   Anotações: {
     icon: StickyNote,

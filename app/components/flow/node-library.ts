@@ -1,28 +1,28 @@
 import {
   Play,
-  Webhook,
-  Clock,
-  FormInput,
-  Mail,
-  Workflow as WorkflowIcon,
-  Globe,
-  Send,
-  Hash,
-  Database,
-  Wand2,
-  GitBranch,
-  GitMerge,
-  Repeat,
-  Timer,
-  Split,
-  Variable,
-  FileJson,
-  Table,
-  Filter,
-  ArrowLeftRight,
-  StickyNote,
-  MessageSquare,
   Square,
+  Globe,
+  Database,
+  Server,
+  Code2,
+  Send,
+  GitBranch,
+  Split,
+  Circle,
+  Timer,
+  Repeat,
+  Workflow as WorkflowIcon,
+  Variable,
+  Calendar,
+  Lock,
+  List,
+  Sigma,
+  MessageSquare,
+  Brain,
+  Boxes,
+  History,
+  FileText,
+  StickyNote,
   Frame,
   type LucideIcon,
 } from "lucide-react";
@@ -30,10 +30,30 @@ import {
 import type { Node } from "@xyflow/react";
 import type { WorkflowNodeVariant } from "./workflow-node";
 
-export type NodeCategory = "Gatilhos" | "Ações" | "Lógica" | "Dados" | "Anotações";
+/**
+ * Biblioteca de nós do editor — **alinhada 1:1 com `NodeType` do engine
+ * em `back/src/lib/engine/types.ts`**. Toda entry executável carrega o
+ * `nodeType` exato que o backend reconhece; o save serializa esse campo
+ * em `definition.nodes[].type` sem mais nenhuma tradução.
+ *
+ * As entries de anotação (sticky_note, container) usam `type` próprio do
+ * React Flow ("sticky", "container") e ainda são parte da definição —
+ * o engine ignora visualNodeTypes na execução.
+ *
+ * Categorias seguem o domínio funcional, não o variant visual:
+ *   - Gatilhos  → ponto de entrada do run
+ *   - Ações     → I/O externo (HTTP, DB, código, resposta)
+ *   - Lógica    → controle de fluxo (if/switch/loop/wait/end)
+ *   - Dados     → manipulação de payload local (var, datas, crypto, listas)
+ *   - IA        → LangChain-style (chat, embeddings, vetor, memória, docs)
+ *   - Anotações → visuais (sticky, frame)
+ */
+export type NodeCategory = "Gatilhos" | "Ações" | "Lógica" | "Dados" | "IA" | "Anotações";
 
 export type NodeLibraryEntry = {
   id: string;
+  /** Espelha `NodeType` do backend. Undefined só para entries de anotação. */
+  nodeType?: string;
   label: string;
   description: string;
   icon: LucideIcon;
@@ -44,7 +64,7 @@ export type NodeLibraryEntry = {
 };
 
 function workflowEntry(
-  id: string,
+  nodeType: string,
   label: string,
   description: string,
   icon: LucideIcon,
@@ -53,7 +73,8 @@ function workflowEntry(
   variant: WorkflowNodeVariant,
 ): NodeLibraryEntry {
   return {
-    id,
+    id: nodeType,
+    nodeType,
     label,
     description,
     icon,
@@ -63,217 +84,222 @@ function workflowEntry(
       id: nodeId,
       type: "workflow",
       position,
-      data: { title: label, description, variant },
+      data: { title: label, description, variant, nodeType },
     }),
   };
 }
 
+// ── Cores por categoria — ecoam o `chip` do workflow-node ──────────────
+const C_TRIGGER = "text-emerald-500";
+const C_ACTION = "text-sky-500";
+const C_LOGIC = "text-amber-500";
+const C_END = "text-rose-500";
+const C_DATA = "text-violet-500";
+const C_AI = "text-fuchsia-500";
+const C_NOTE = "text-yellow-500";
+
 export const NODE_LIBRARY: NodeLibraryEntry[] = [
-  // Gatilhos
+  // ── Gatilhos ─────────────────────────────────────────────────────────
   workflowEntry(
-    "trigger-manual",
-    "Início manual",
-    "Disparo iniciado pelo usuário",
+    "start",
+    "Início",
+    "Ponto de entrada do workflow",
     Play,
-    "text-emerald-500",
-    "Gatilhos",
-    "trigger",
-  ),
-  workflowEntry(
-    "trigger-webhook",
-    "Webhook",
-    "Recebe uma chamada HTTP",
-    Webhook,
-    "text-emerald-500",
-    "Gatilhos",
-    "trigger",
-  ),
-  workflowEntry(
-    "trigger-schedule",
-    "Agendamento",
-    "Executa em horários definidos",
-    Clock,
-    "text-emerald-500",
-    "Gatilhos",
-    "trigger",
-  ),
-  workflowEntry(
-    "trigger-form",
-    "Formulário",
-    "Submissão de formulário externo",
-    FormInput,
-    "text-emerald-500",
-    "Gatilhos",
-    "trigger",
-  ),
-  workflowEntry(
-    "trigger-email",
-    "E-mail recebido",
-    "Dispara ao receber um e-mail",
-    Mail,
-    "text-emerald-500",
+    C_TRIGGER,
     "Gatilhos",
     "trigger",
   ),
 
-  // Ações
+  // ── Ações ────────────────────────────────────────────────────────────
   workflowEntry(
-    "action-http",
+    "http_request",
     "Requisição HTTP",
     "Chama uma API externa",
     Globe,
-    "text-sky-500",
+    C_ACTION,
     "Ações",
     "action",
   ),
   workflowEntry(
-    "action-send-email",
-    "Enviar e-mail",
-    "Notifica via e-mail",
-    Send,
-    "text-sky-500",
-    "Ações",
-    "action",
-  ),
-  workflowEntry(
-    "action-slack",
-    "Mensagem no Slack",
-    "Posta em um canal do Slack",
-    Hash,
-    "text-sky-500",
-    "Ações",
-    "action",
-  ),
-  workflowEntry(
-    "action-db",
-    "Banco de dados",
-    "Lê ou grava em uma tabela",
+    "postgres",
+    "Postgres",
+    "Executa SQL em um banco Postgres",
     Database,
-    "text-sky-500",
+    C_ACTION,
     "Ações",
     "action",
   ),
   workflowEntry(
-    "action-transform",
-    "Transformar",
-    "Aplica uma transformação no payload",
-    Wand2,
-    "text-sky-500",
+    "redis",
+    "Redis",
+    "Operação de chave/valor ou lista",
+    Server,
+    C_ACTION,
     "Ações",
     "action",
   ),
   workflowEntry(
-    "action-generic",
-    "Ação genérica",
-    "Tarefa customizada",
-    WorkflowIcon,
-    "text-sky-500",
+    "code",
+    "Código",
+    "Executa JavaScript arbitrário",
+    Code2,
+    C_ACTION,
+    "Ações",
+    "action",
+  ),
+  workflowEntry(
+    "respond_to_webhook",
+    "Responder webhook",
+    "Envia resposta HTTP custom no modo sync",
+    Send,
+    C_ACTION,
     "Ações",
     "action",
   ),
 
-  // Lógica
+  // ── Lógica ───────────────────────────────────────────────────────────
   workflowEntry(
-    "logic-condition",
+    "if",
     "Condição",
-    "Se / senão baseado em regra",
+    "Bifurca em true/false por regra",
     GitBranch,
-    "text-amber-500",
+    C_LOGIC,
     "Lógica",
     "condition",
   ),
   workflowEntry(
-    "logic-switch",
+    "switch",
     "Switch",
     "Múltiplos caminhos por valor",
     Split,
-    "text-amber-500",
+    C_LOGIC,
     "Lógica",
     "condition",
   ),
   workflowEntry(
-    "logic-loop",
-    "Loop",
-    "Repete para cada item",
+    "split_in_batches",
+    "Loop em lotes",
+    "Itera array em batches",
     Repeat,
-    "text-amber-500",
+    C_LOGIC,
     "Lógica",
     "condition",
   ),
   workflowEntry(
-    "logic-delay",
+    "wait",
     "Aguardar",
-    "Pausa por um intervalo",
+    "Pausa por intervalo ou até horário",
     Timer,
-    "text-amber-500",
+    C_LOGIC,
     "Lógica",
     "condition",
   ),
   workflowEntry(
-    "logic-merge",
-    "Mesclar",
-    "Combina múltiplos caminhos",
-    GitMerge,
-    "text-amber-500",
+    "noop",
+    "No-op",
+    "Passa adiante sem efeito",
+    Circle,
+    C_LOGIC,
     "Lógica",
     "condition",
   ),
-  workflowEntry("logic-end", "Fim", "Encerra o workflow", Square, "text-rose-500", "Lógica", "end"),
+  workflowEntry(
+    "execute_workflow",
+    "Sub-workflow",
+    "Invoca outro workflow e aguarda",
+    WorkflowIcon,
+    C_LOGIC,
+    "Lógica",
+    "condition",
+  ),
+  workflowEntry("end", "Fim", "Encerra o workflow", Square, C_END, "Lógica", "end"),
 
-  // Dados
+  // ── Dados ────────────────────────────────────────────────────────────
   workflowEntry(
-    "data-variable",
+    "set_variable",
     "Variável",
-    "Define ou lê uma variável",
+    "Define ou atualiza variáveis do run",
     Variable,
-    "text-violet-500",
+    C_DATA,
     "Dados",
-    "action",
+    "data",
   ),
   workflowEntry(
-    "data-json",
-    "Parse JSON",
-    "Converte string em objeto",
-    FileJson,
-    "text-violet-500",
+    "date_time",
+    "Data e hora",
+    "Parse, format, diff, add em datas",
+    Calendar,
+    C_DATA,
     "Dados",
-    "action",
+    "data",
+  ),
+  workflowEntry("crypto", "Crypto", "Hash, HMAC, UUID, base64", Lock, C_DATA, "Dados", "data"),
+  workflowEntry(
+    "item_lists",
+    "Listas",
+    "Filtra, ordena, fatia, distinct",
+    List,
+    C_DATA,
+    "Dados",
+    "data",
   ),
   workflowEntry(
-    "data-csv",
-    "Ler CSV",
-    "Importa linhas de um CSV",
-    Table,
-    "text-violet-500",
+    "aggregate",
+    "Agregação",
+    "Sum, avg, min, max, group by",
+    Sigma,
+    C_DATA,
     "Dados",
-    "action",
-  ),
-  workflowEntry(
-    "data-filter",
-    "Filtrar",
-    "Mantém apenas itens válidos",
-    Filter,
-    "text-violet-500",
-    "Dados",
-    "action",
-  ),
-  workflowEntry(
-    "data-map",
-    "Mapear campos",
-    "Renomeia/transforma campos",
-    ArrowLeftRight,
-    "text-violet-500",
-    "Dados",
-    "action",
+    "data",
   ),
 
-  // Anotações
+  // ── IA ───────────────────────────────────────────────────────────────
+  workflowEntry(
+    "ai_chat",
+    "Chat IA",
+    "Anthropic / OpenAI chat completion",
+    MessageSquare,
+    C_AI,
+    "IA",
+    "ai",
+  ),
+  workflowEntry("embeddings", "Embeddings", "Gera vetores via OpenAI", Brain, C_AI, "IA", "ai"),
+  workflowEntry(
+    "vector_store",
+    "Vector store",
+    "Insert / search em pgvector",
+    Boxes,
+    C_AI,
+    "IA",
+    "ai",
+  ),
+  workflowEntry(
+    "chat_memory",
+    "Memória de chat",
+    "Histórico de mensagens em Postgres",
+    History,
+    C_AI,
+    "IA",
+    "ai",
+  ),
+  workflowEntry(
+    "document_loader",
+    "Document loader",
+    "Chunking de texto pra RAG",
+    FileText,
+    C_AI,
+    "IA",
+    "ai",
+  ),
+
+  // ── Anotações ────────────────────────────────────────────────────────
   {
-    id: "annotation-sticky",
+    id: "sticky_note",
+    nodeType: "sticky_note",
     label: "Sticky note",
     description: "Anotação rápida em post-it",
     icon: StickyNote,
-    color: "text-yellow-500",
+    color: C_NOTE,
     category: "Anotações",
     build: (position, nodeId) => ({
       id: nodeId,
@@ -285,23 +311,8 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
     }),
   },
   {
-    id: "annotation-comment",
-    label: "Comentário",
-    description: "Comentário breve no fluxo",
-    icon: MessageSquare,
-    color: "text-yellow-500",
-    category: "Anotações",
-    build: (position, nodeId) => ({
-      id: nodeId,
-      type: "sticky",
-      position,
-      width: 200,
-      height: 100,
-      data: { text: "", color: "blue" },
-    }),
-  },
-  {
-    id: "annotation-container",
+    id: "container",
+    nodeType: "container",
     label: "Frame / Grupo",
     description: "Circula uma área para agrupar nós",
     icon: Frame,
@@ -324,5 +335,6 @@ export const NODE_CATEGORIES: NodeCategory[] = [
   "Ações",
   "Lógica",
   "Dados",
+  "IA",
   "Anotações",
 ];

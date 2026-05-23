@@ -1,22 +1,32 @@
-FROM node:20-alpine AS development-dependencies-env
-COPY . /app
-WORKDIR /app
-RUN npm ci
+# syntax=docker/dockerfile:1
+#
+# Build do app React Router 7 com Bun.
+# - O projeto usa `bun.lock`, então não há `package-lock.json` (era o que quebrava
+#   o Dockerfile padrão gerado pelo `create-react-router`).
+# - `--ignore-scripts` no install evita rodar o `prepare` (lefthook), que é
+#   ferramenta de dev e quebra se .git não existir no contexto.
 
-FROM node:20-alpine AS production-dependencies-env
-COPY ./package.json package-lock.json /app/
+FROM oven/bun:1-alpine AS deps
 WORKDIR /app
-RUN npm ci --omit=dev
+COPY package.json bun.lock ./
+RUN bun install --frozen-lockfile --ignore-scripts
 
-FROM node:20-alpine AS build-env
-COPY . /app/
-COPY --from=development-dependencies-env /app/node_modules /app/node_modules
+FROM oven/bun:1-alpine AS build
 WORKDIR /app
-RUN npm run build
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+RUN bun run build
 
-FROM node:20-alpine
-COPY ./package.json package-lock.json /app/
-COPY --from=production-dependencies-env /app/node_modules /app/node_modules
-COPY --from=build-env /app/build /app/build
+FROM oven/bun:1-alpine AS prod-deps
 WORKDIR /app
-CMD ["npm", "run", "start"]
+COPY package.json bun.lock ./
+RUN bun install --production --frozen-lockfile --ignore-scripts
+
+FROM oven/bun:1-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package.json ./
+COPY --from=prod-deps /app/node_modules ./node_modules
+COPY --from=build /app/build ./build
+EXPOSE 3000
+CMD ["bun", "run", "start"]

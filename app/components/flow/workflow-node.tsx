@@ -1,16 +1,29 @@
 import { memo } from "react";
 import { Handle, Position, type NodeProps, type Node } from "@xyflow/react";
-import { Play, Workflow as WorkflowIcon, GitBranch, Square } from "lucide-react";
+import {
+  Play,
+  Workflow as WorkflowIcon,
+  GitBranch,
+  Square,
+  Database,
+  Sparkles,
+} from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { cn } from "~/lib/utils";
 
-export type WorkflowNodeVariant = "trigger" | "action" | "condition" | "end";
+export type WorkflowNodeVariant = "trigger" | "action" | "condition" | "end" | "data" | "ai";
 
 export type WorkflowNodeData = {
   title: string;
   description?: string;
   variant?: WorkflowNodeVariant;
+  /**
+   * Tipo do nó no engine (espelha `NodeType` do backend). Permite que o
+   * editor saiba como serializar `definition.nodes[].type` no save sem
+   * depender de heurística por título/variant.
+   */
+  nodeType?: string;
 };
 
 export type WorkflowNode = Node<WorkflowNodeData, "workflow">;
@@ -23,6 +36,8 @@ const VARIANT_META: Record<
   action: { icon: WorkflowIcon, color: "text-sky-500", chip: "bg-sky-500" },
   condition: { icon: GitBranch, color: "text-amber-500", chip: "bg-amber-500" },
   end: { icon: Square, color: "text-rose-500", chip: "bg-rose-500" },
+  data: { icon: Database, color: "text-violet-500", chip: "bg-violet-500" },
+  ai: { icon: Sparkles, color: "text-fuchsia-500", chip: "bg-fuchsia-500" },
 };
 
 function WorkflowNodeComponent({ data, selected }: NodeProps<WorkflowNode>) {
