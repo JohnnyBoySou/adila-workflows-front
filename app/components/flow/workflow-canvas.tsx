@@ -46,13 +46,19 @@ import { cn } from "~/lib/utils";
 // devem aparecer no dialog de config nem ser sobrescritos por ele.
 const EDITOR_META_KEYS = new Set(["title", "description", "variant", "nodeType"]);
 
-// ID global do gradient usado por todas as edges quando `edgeStyle.gradient`
-// está ligado. Referenciado via `stroke="url(#...)"`. Browsers resolvem
-// fragment refs cross-SVG no mesmo document, então as defs podem viver
-// numa svg irmã da do React Flow.
 const EDGE_GRADIENT_ID = "workflow-edge-gradient";
+// Gradient animado — pico de brilho viaja da esquerda pra direita e volta.
+const EDGE_FLOW_ID = "workflow-edge-flow";
 
-function EdgeGradientDefs({ from, to }: { from: string; to: string }) {
+function EdgeGradientDefs({
+  from,
+  to,
+  animated,
+}: {
+  from: string;
+  to: string;
+  animated: boolean;
+}) {
   return (
     <svg
       width={0}
@@ -61,10 +67,34 @@ function EdgeGradientDefs({ from, to }: { from: string; to: string }) {
       style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}
     >
       <defs>
+        {/* Gradient estático — usado quando só gradient (sem animação) */}
         <linearGradient id={EDGE_GRADIENT_ID} x1="0" y1="0" x2="1" y2="0">
           <stop offset="0%" stopColor={from} />
           <stop offset="100%" stopColor={to} />
         </linearGradient>
+
+        {/* Gradient com pico viajante — gradient + animação ativa */}
+        {animated && (
+          <linearGradient id={EDGE_FLOW_ID} x1="0" y1="0" x2="1" y2="0">
+            {/* "escuro" nas bordas, "brilhante" no centro — o pico viaja */}
+            <stop offset="0%"   stopColor={from} stopOpacity="0.08" />
+            <stop offset="30%"  stopColor={from} stopOpacity="0.55" />
+            <stop offset="50%"  stopColor={to}   stopOpacity="1" />
+            <stop offset="70%"  stopColor={to}   stopOpacity="0.55" />
+            <stop offset="100%" stopColor={to}   stopOpacity="0.08" />
+            {/* Desloca o gradient de -100% a +100% e volta — efeito de luz correndo */}
+            <animateTransform
+              attributeName="gradientTransform"
+              type="translate"
+              values="-1,0; 1,0; -1,0"
+              dur="2.4s"
+              repeatCount="indefinite"
+              calcMode="spline"
+              keyTimes="0; 0.5; 1"
+              keySplines="0.4 0 0.6 1; 0.4 0 0.6 1"
+            />
+          </linearGradient>
+        )}
       </defs>
     </svg>
   );
@@ -136,17 +166,24 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
 
   const { screenToFlowPosition, fitView } = useReactFlow();
 
-  // Opções aplicadas a novas edges (criadas via conexão de handles). Edges
-  // existentes herdam via style override no `edges` derivado abaixo.
-  // Quando `gradient: true`, o stroke aponta pra um `<linearGradient>` global
-  // injetado abaixo via `<EdgeGradientDefs>`. O marker da seta não suporta
-  // url() de gradient na maioria dos browsers, então cai pra `color` sólido.
-  const strokeRef = edgeStyle.gradient ? `url(#${EDGE_GRADIENT_ID})` : edgeStyle.color;
-  // Animação nativa do React Flow é "moving dashes" — só faz sentido com
-  // a edge tracejada. Quando o usuário pediu animação numa linha sólida,
-  // usamos uma classe própria (pulse de opacidade) pra desacoplar do dash.
+  // gradient+animated → pico viajante (SVG animateTransform); gradient sem animação →
+  // gradient estático; sem gradient → cor sólida.
+  const strokeRef = edgeStyle.gradient
+    ? edgeStyle.animated
+      ? `url(#${EDGE_FLOW_ID})`
+      : `url(#${EDGE_GRADIENT_ID})`
+    : edgeStyle.color;
+
+  // Animação nativa do React Flow ("moving dashes") só faz sentido com dashed.
   const rfAnimated = edgeStyle.animated && edgeStyle.dashed;
-  const pulseClass = edgeStyle.animated && !edgeStyle.dashed ? "wf-edge-pulse" : undefined;
+  // Pulse de opacidade: animated + sólida + sem gradient (o gradient já tem sua animação SVG).
+  const pulseClass =
+    edgeStyle.animated && !edgeStyle.dashed && !edgeStyle.gradient ? "wf-edge-pulse" : undefined;
+  // Glow inline no stroke quando gradient + animated — extra "maneiro".
+  const glowFilter =
+    edgeStyle.gradient && edgeStyle.animated
+      ? `drop-shadow(0 0 ${edgeStyle.thickness + 1}px ${edgeStyle.colorEnd}99)`
+      : undefined;
 
   const defaultEdgeOptions = useMemo<DefaultEdgeOptions>(
     () => ({
@@ -157,12 +194,13 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
         stroke: strokeRef,
         strokeWidth: edgeStyle.thickness,
         strokeDasharray: edgeStyle.dashed ? "6 4" : "none",
+        ...(glowFilter ? { filter: glowFilter } : {}),
       },
       ...(edgeStyle.arrow
         ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.colorEnd } }
         : {}),
     }),
-    [edgeStyle, strokeRef, rfAnimated, pulseClass],
+    [edgeStyle, strokeRef, rfAnimated, pulseClass, glowFilter],
   );
 
   const styledEdges = useMemo<Edge[]>(
@@ -177,6 +215,7 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
           stroke: strokeRef,
           strokeWidth: edgeStyle.thickness,
           strokeDasharray: edgeStyle.dashed ? "6 4" : "none",
+          ...(glowFilter ? { filter: glowFilter } : {}),
         },
         markerEnd: edgeStyle.arrow
           ? {
@@ -185,7 +224,7 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
             }
           : undefined,
       })),
-    [edges, edgeStyle, strokeRef, rfAnimated, pulseClass],
+    [edges, edgeStyle, strokeRef, rfAnimated, pulseClass, glowFilter],
   );
 
   const onConnect = useCallback(
@@ -385,7 +424,11 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
   return (
     <WorkflowIdProvider value={workflowId}>
       {edgeStyle.gradient && (
-        <EdgeGradientDefs from={edgeStyle.color} to={edgeStyle.colorEnd} />
+        <EdgeGradientDefs
+          from={edgeStyle.color}
+          to={edgeStyle.colorEnd}
+          animated={edgeStyle.animated}
+        />
       )}
       <ReactFlow
         nodes={nodes}
