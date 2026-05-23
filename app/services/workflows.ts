@@ -107,6 +107,40 @@ export function remove(id: string): Promise<void> {
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Import a partir do n8n                                                      */
+/* -------------------------------------------------------------------------- */
+
+/** Resumo de quantos nós o importer conseguiu mapear, ignorou ou marcou como não suportados. */
+export type N8nImportSummary = {
+  total: number;
+  mapped: number;
+  unsupported: number;
+  skipped: number;
+  /** Lista (ordenada) dos `type` do n8n que não temos handler ainda. */
+  unsupportedTypes: string[];
+};
+
+export type ImportFromN8nInput = {
+  /** JSON cru exportado pelo n8n. */
+  workflow: Record<string, unknown>;
+  /** Override do nome (opcional). */
+  name?: string;
+  /** UUID da pasta de destino, ou null pra raiz. */
+  folderId?: string | null;
+};
+
+export function importFromN8n(
+  input: ImportFromN8nInput,
+): Promise<{ workflow: Workflow; summary: N8nImportSummary }> {
+  return unwrap(
+    $fetch<{ workflow: Workflow; summary: N8nImportSummary }>("/workflows/import/n8n", {
+      method: "POST",
+      body: input,
+    }),
+  );
+}
+
 /** Dispara uma execução manual do workflow. */
 export function run(
   id: string,
