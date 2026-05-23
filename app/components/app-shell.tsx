@@ -61,7 +61,6 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { title: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
   { title: "Workflows", to: "/dashboard/workflows", icon: Workflow },
-  { title: "Configurações", to: "/dashboard/settings", icon: Settings },
 ];
 
 const secondaryNav: NavItem[] = [{ title: "Suporte", to: "#", icon: LifeBuoy }];
@@ -248,11 +247,15 @@ function AppSidebar() {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="size-4" /> Perfil
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard/profile">
+                    <User className="size-4" /> Perfil
+                  </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Settings className="size-4" /> Configurações
+                <DropdownMenuItem asChild>
+                  <Link to="/dashboard/settings">
+                    <Settings className="size-4" /> Configurações
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <DropdownMenuItem onSelect={handleSignOut}>
