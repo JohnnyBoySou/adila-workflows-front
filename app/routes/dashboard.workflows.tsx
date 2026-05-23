@@ -1,7 +1,17 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, FolderPlus, Loader2, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
+import {
+  Copy,
+  FolderPlus,
+  LayoutGrid,
+  List,
+  Loader2,
+  MoreHorizontal,
+  Pause,
+  Play,
+  Plus,
+} from "lucide-react";
 
 import type { Route } from "./+types/dashboard.workflows";
 import type { DashboardHandle } from "./dashboard";
@@ -42,8 +52,21 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "~/components/ui/pagination";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "~/components/ui/table";
 import { FolderIcon } from "~/components/folder-icon";
 import { cn } from "~/lib/utils";
+
+type ViewMode = "grid" | "table";
+function isViewMode(v: string | null): v is ViewMode {
+  return v === "grid" || v === "table";
+}
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -131,6 +154,8 @@ export default function WorkflowsListRoute() {
 
   const folderId = searchParams.get("folder");
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
+  const viewParam = searchParams.get("view");
+  const view: ViewMode = isViewMode(viewParam) ? viewParam : "grid";
 
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
@@ -160,7 +185,7 @@ export default function WorkflowsListRoute() {
   const workflowsTotal = workflowsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(workflowsTotal / PAGE_SIZE));
 
-  function setParam(key: "folder" | "page", value: string | null) {
+  function setParam(key: "folder" | "page" | "view", value: string | null) {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
@@ -189,6 +214,8 @@ export default function WorkflowsListRoute() {
     (foldersQuery.error instanceof Error ? foldersQuery.error.message : null) ??
     (workflowsQuery.error instanceof Error ? workflowsQuery.error.message : null);
   const empty = !loading && foldersData.length === 0 && workflowsData.length === 0;
+
+  const showTable = view === "table";
 
   return (
     <div className="space-y-6">
@@ -226,6 +253,7 @@ export default function WorkflowsListRoute() {
         </div>
 
         <div className="flex items-center gap-2">
+          <ViewToggle value={view} onChange={(v) => setParam("view", v === "grid" ? null : v)} />
           <Button variant="outline" size="sm" onClick={() => setFolderDialogOpen(true)}>
             <FolderPlus className="size-4" />
             Nova pasta
@@ -254,26 +282,37 @@ export default function WorkflowsListRoute() {
         <EmptyState />
       ) : (
         <>
-          {foldersData.length > 0 && (
-            <section className="space-y-3">
-              <SectionTitle>Pastas</SectionTitle>
-              <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
-                {foldersData.map((f) => (
-                  <FolderCard key={f.id} folder={f} onOpen={() => enterFolder(f.id)} />
-                ))}
-              </div>
-            </section>
-          )}
+          {showTable ? (
+            <WorkflowsTable
+              folders={foldersData}
+              workflows={workflowsData}
+              onEnterFolder={enterFolder}
+              onOpenWorkflow={openWorkflow}
+            />
+          ) : (
+            <>
+              {foldersData.length > 0 && (
+                <section className="space-y-3">
+                  <SectionTitle>Pastas</SectionTitle>
+                  <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+                    {foldersData.map((f) => (
+                      <FolderCard key={f.id} folder={f} onOpen={() => enterFolder(f.id)} />
+                    ))}
+                  </div>
+                </section>
+              )}
 
-          {workflowsData.length > 0 && (
-            <section className="space-y-3">
-              <SectionTitle>Workflows</SectionTitle>
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                {workflowsData.map((w) => (
-                  <WorkflowCard key={w.id} workflow={w} onOpen={() => openWorkflow(w.id)} />
-                ))}
-              </div>
-            </section>
+              {workflowsData.length > 0 && (
+                <section className="space-y-3">
+                  <SectionTitle>Workflows</SectionTitle>
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+                    {workflowsData.map((w) => (
+                      <WorkflowCard key={w.id} workflow={w} onOpen={() => openWorkflow(w.id)} />
+                    ))}
+                  </div>
+                </section>
+              )}
+            </>
           )}
 
           {workflowsTotal > PAGE_SIZE && (
@@ -601,6 +640,187 @@ function ActionsMenu({ kind }: { kind: "folder" }) {
         )}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* View toggle + tabela                                                        */
+/* -------------------------------------------------------------------------- */
+
+function ViewToggle({
+  value,
+  onChange,
+}: {
+  value: ViewMode;
+  onChange: (v: ViewMode) => void;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label="Modo de visualização"
+      className="inline-flex items-center rounded-md border bg-background p-0.5"
+    >
+      <button
+        type="button"
+        aria-pressed={value === "grid"}
+        aria-label="Cards"
+        title="Cards"
+        onClick={() => onChange("grid")}
+        className={cn(
+          "inline-flex size-7 cursor-pointer items-center justify-center rounded-sm transition-colors",
+          value === "grid"
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <LayoutGrid className="size-4" />
+      </button>
+      <button
+        type="button"
+        aria-pressed={value === "table"}
+        aria-label="Tabela"
+        title="Tabela"
+        onClick={() => onChange("table")}
+        className={cn(
+          "inline-flex size-7 cursor-pointer items-center justify-center rounded-sm transition-colors",
+          value === "table"
+            ? "bg-muted text-foreground"
+            : "text-muted-foreground hover:text-foreground",
+        )}
+      >
+        <List className="size-4" />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Tabela única para a visão "table" — pastas primeiro (clique entra) e
+ * workflows depois (clique abre o studio). Mantém o mesmo conjunto de ações
+ * dos cards, exposto via `WorkflowActionsMenu` por linha.
+ */
+function WorkflowsTable({
+  folders,
+  workflows,
+  onEnterFolder,
+  onOpenWorkflow,
+}: {
+  folders: Folder[];
+  workflows: WorkflowSummary[];
+  onEnterFolder: (id: string) => void;
+  onOpenWorkflow: (id: string) => void;
+}) {
+  return (
+    <div className="rounded-md border">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>Nome</TableHead>
+            <TableHead className="w-28">Tipo</TableHead>
+            <TableHead className="w-32">Status</TableHead>
+            <TableHead className="w-40">Atualizado</TableHead>
+            <TableHead className="w-12" aria-label="Ações" />
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {folders.map((f) => (
+            <TableRow
+              key={`folder-${f.id}`}
+              onClick={() => onEnterFolder(f.id)}
+              className="cursor-pointer"
+            >
+              <TableCell className="font-medium">
+                <span className="inline-flex items-center gap-2">
+                  <FolderIcon className="w-5 text-primary" />
+                  {f.name}
+                </span>
+              </TableCell>
+              <TableCell className="text-muted-foreground">Pasta</TableCell>
+              <TableCell className="text-muted-foreground">—</TableCell>
+              <TableCell className="text-muted-foreground">
+                {formatRelative(f.updatedAt)}
+              </TableCell>
+              <TableCell onClick={(e) => e.stopPropagation()}>
+                <ActionsMenu kind="folder" />
+              </TableCell>
+            </TableRow>
+          ))}
+          {workflows.map((w) => (
+            <WorkflowTableRow key={w.id} workflow={w} onOpen={() => onOpenWorkflow(w.id)} />
+          ))}
+        </TableBody>
+      </Table>
+    </div>
+  );
+}
+
+function WorkflowTableRow({
+  workflow,
+  onOpen,
+}: {
+  workflow: WorkflowSummary;
+  onOpen: () => void;
+}) {
+  const meta = statusMeta[workflow.status];
+  const queryClient = useQueryClient();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+
+  const duplicateMutation = useMutation({
+    mutationFn: async () => {
+      const full = await workflowsApi.get(workflow.id);
+      return workflowsApi.create({
+        name: `Cópia de ${workflow.name}`,
+        ...(full.description !== null && { description: full.description }),
+        folderId: workflow.folderId,
+        definition: full.definition,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+    },
+  });
+
+  return (
+    <>
+      <TableRow onClick={onOpen} className="cursor-pointer">
+        <TableCell className="font-medium">
+          <span className="inline-flex items-center gap-2">
+            <span aria-hidden="true" className={cn("size-2 shrink-0 rounded-full", meta.dot)} />
+            {workflow.name}
+          </span>
+        </TableCell>
+        <TableCell className="text-muted-foreground">Workflow</TableCell>
+        <TableCell>
+          <Badge variant={meta.badge}>{meta.label}</Badge>
+        </TableCell>
+        <TableCell className="text-muted-foreground">
+          {formatRelative(workflow.updatedAt)}
+        </TableCell>
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          <WorkflowActionsMenu
+            status={workflow.status}
+            duplicating={duplicateMutation.isPending}
+            onDuplicate={() => duplicateMutation.mutate()}
+            onRename={() => setRenameOpen(true)}
+            onMove={() => setMoveOpen(true)}
+          />
+        </TableCell>
+      </TableRow>
+
+      <WorkflowRenameDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        workflowId={workflow.id}
+        currentName={workflow.name}
+      />
+      <WorkflowMoveDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        workflowId={workflow.id}
+        currentFolderId={workflow.folderId}
+      />
+    </>
   );
 }
 

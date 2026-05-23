@@ -24,29 +24,95 @@ import {
 import { cn } from "~/lib/utils";
 
 import type { FieldDef } from "./types";
+import { DEFAULT_SAMPLE_CONTEXT, hasTemplate, renderTemplate } from "./template";
 
 interface FieldRendererProps {
   field: FieldDef;
   value: unknown;
   onChange: (next: unknown) => void;
+  /** Erro externo (validação do dialog). Renderizado abaixo do campo. */
+  error?: string | null;
+  /**
+   * Reporta erros internos do editor (ex: parse de JSON). O dialog
+   * usa pra travar o Salvar. `null` limpa o erro anterior.
+   */
+  onParseError?: (msg: string | null) => void;
 }
 
-export function FieldRenderer({ field, value, onChange }: FieldRendererProps) {
+export function FieldRenderer({ field, value, onChange, error, onParseError }: FieldRendererProps) {
   return (
     <div className="flex flex-col gap-1.5">
       <Label htmlFor={field.name} className="text-xs font-medium">
         {field.label}
         {field.required && <span className="ml-0.5 text-destructive">*</span>}
       </Label>
-      {renderInput({ field, value, onChange })}
-      {field.description && (
-        <p className="text-[11px] leading-snug text-muted-foreground">{field.description}</p>
+      {renderInput({ field, value, onChange, onParseError })}
+      {error ? (
+        <p className="text-[11px] text-destructive">{error}</p>
+      ) : (
+        field.description && (
+          <p className="text-[11px] leading-snug text-muted-foreground">{field.description}</p>
+        )
       )}
+      <TemplatePreview field={field} value={value} />
     </div>
   );
 }
 
-function renderInput({ field, value, onChange }: FieldRendererProps) {
+// ── TemplatePreview ───────────────────────────────────────────────────────
+// Quando o valor de um campo text/textarea/json contém `{{ … }}`, mostramos
+// uma linha resolvida contra `DEFAULT_SAMPLE_CONTEXT`. É sempre informativo,
+// nunca bloqueia o save. Code blocks (JS) não passam por renderTemplate no
+// engine, então skipa.
+function TemplatePreview({ field, value }: { field: FieldDef; value: unknown }) {
+  if (field.type !== "text" && field.type !== "textarea" && field.type !== "json") return null;
+
+  // Pra json, o `value` já é objeto/array. Templatamos recursivamente e
+  // serializamos. Pra strings (text/textarea), basta o renderTemplate
+  // direto. Detecta presença de `{{ ... }}` antes pra não poluir.
+  const stringified =
+    typeof value === "string"
+      ? value
+      : value && typeof value === "object"
+        ? safeStringify(value)
+        : "";
+  if (!hasTemplate(stringified)) return null;
+
+  let rendered: unknown;
+  try {
+    rendered = renderTemplate(value, DEFAULT_SAMPLE_CONTEXT);
+  } catch {
+    return null;
+  }
+
+  const out =
+    typeof rendered === "string"
+      ? rendered
+      : rendered === undefined
+        ? "undefined"
+        : safeStringify(rendered);
+
+  return (
+    <div className="rounded-md border border-dashed border-border bg-muted/40 px-2 py-1.5">
+      <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        Preview
+      </p>
+      <pre className="overflow-x-auto whitespace-pre-wrap break-words font-mono text-[11px] text-foreground">
+        {out}
+      </pre>
+    </div>
+  );
+}
+
+function safeStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function renderInput({ field, value, onChange, onParseError }: Omit<FieldRendererProps, "error">) {
   switch (field.type) {
     case "text":
       return (
@@ -122,7 +188,14 @@ function renderInput({ field, value, onChange }: FieldRendererProps) {
     case "stringList":
       return <StringListEditor value={value} onChange={onChange} />;
     case "json":
-      return <JsonEditor value={value} onChange={onChange} placeholder={field.placeholder} />;
+      return (
+        <JsonEditor
+          value={value}
+          onChange={onChange}
+          placeholder={field.placeholder}
+          onParseError={onParseError}
+        />
+      );
     case "code":
       return (
         <Textarea
@@ -319,10 +392,12 @@ function JsonEditor({
   value,
   onChange,
   placeholder,
+  onParseError,
 }: {
   value: unknown;
   onChange: (next: unknown) => void;
   placeholder?: string;
+  onParseError?: (msg: string | null) => void;
 }) {
   const [text, setText] = useState<string>(() => formatInitial(value));
   const [error, setError] = useState<string | null>(null);
@@ -330,40 +405,45 @@ function JsonEditor({
   useEffect(() => {
     setText(formatInitial(value));
     setError(null);
+    onParseError?.(null);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [value === undefined]);
+
+  function setErr(msg: string | null) {
+    setError(msg);
+    onParseError?.(msg);
+  }
 
   function handleChange(next: string) {
     setText(next);
     if (next.trim() === "") {
-      setError(null);
+      setErr(null);
       onChange(undefined);
       return;
     }
     try {
       const parsed = JSON.parse(next);
-      setError(null);
+      setErr(null);
       onChange(parsed);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "JSON inválido");
+      setErr(e instanceof Error ? e.message : "JSON inválido");
     }
   }
 
+  // O erro renderizado em texto vem do FieldRenderer (via onParseError);
+  // aqui só destacamos a borda quando inválido.
   return (
-    <div className="flex flex-col gap-1">
-      <Textarea
-        value={text}
-        rows={6}
-        placeholder={placeholder ?? '{ "foo": "bar" }'}
-        spellCheck={false}
-        onChange={(e) => handleChange(e.target.value)}
-        className={cn(
-          "font-mono text-xs",
-          error && "border-destructive focus-visible:ring-destructive/30",
-        )}
-      />
-      {error && <p className="text-[11px] text-destructive">{error}</p>}
-    </div>
+    <Textarea
+      value={text}
+      rows={6}
+      placeholder={placeholder ?? '{ "foo": "bar" }'}
+      spellCheck={false}
+      onChange={(e) => handleChange(e.target.value)}
+      className={cn(
+        "font-mono text-xs",
+        error && "border-destructive focus-visible:ring-destructive/30",
+      )}
+    />
   );
 }
 

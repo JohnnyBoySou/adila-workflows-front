@@ -20,6 +20,11 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
+# Vite inlinea variáveis VITE_* no bundle no momento do build — então elas
+# precisam estar presentes aqui, não apenas em runtime. Quem orquestra o
+# deploy (Railway/Railpack/CI) deve passar `--build-arg VITE_AUTH_URL=...`.
+ARG VITE_AUTH_URL
+ENV VITE_AUTH_URL=$VITE_AUTH_URL
 RUN npm run build
 
 FROM nginx:1.27-alpine

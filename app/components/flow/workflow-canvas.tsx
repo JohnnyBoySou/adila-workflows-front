@@ -29,7 +29,7 @@ import { FlowToolbar } from "./flow-toolbar";
 import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
-import { NodeConfigDialog } from "./node-config-dialog";
+import { NodeConfigDialog, type NodeMeta } from "./node-config-dialog";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
 import { Button } from "~/components/ui/button";
@@ -160,7 +160,8 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   const [configState, setConfigState] = useState<{
     nodeId: string;
     nodeType: string;
-    nodeTitle?: string;
+    /** Meta editor-only (só nós executáveis). Visuais ficam com undefined. */
+    meta?: NodeMeta;
     values: Record<string, unknown>;
   } | null>(null);
 
@@ -168,11 +169,14 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
     // Nó executável (React Flow type = "workflow") → engine type vem de data.nodeType.
     // Visuais (sticky/container) → mapeia pro tipo do engine equivalente.
     let engineType: string | undefined;
-    let title: string | undefined;
+    let meta: NodeMeta | undefined;
     if (node.type === "workflow") {
       const d = (node.data ?? {}) as Record<string, unknown>;
       engineType = typeof d.nodeType === "string" ? d.nodeType : undefined;
-      title = typeof d.title === "string" ? d.title : undefined;
+      meta = {
+        title: typeof d.title === "string" ? d.title : undefined,
+        description: typeof d.description === "string" ? d.description : undefined,
+      };
     } else if (node.type === "sticky") {
       engineType = "sticky_note";
     } else if (node.type === "container") {
@@ -186,23 +190,33 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
       if (EDITOR_META_KEYS.has(k)) continue;
       values[k] = v;
     }
-    setConfigState({ nodeId: node.id, nodeType: engineType, nodeTitle: title, values });
+    setConfigState({ nodeId: node.id, nodeType: engineType, meta, values });
   }, []);
 
   const handleConfigSave = useCallback(
-    (next: Record<string, unknown>) => {
+    (next: Record<string, unknown>, nextMeta?: NodeMeta) => {
       if (!configState) return;
       const id = configState.nodeId;
       setNodes((prev) =>
         prev.map((n) => {
           if (n.id !== id) return n;
-          // Preserva campos meta de editor presentes em `data`.
+          // Preserva variant/nodeType (não editáveis) e aplica title/description
+          // do dialog quando houver — vazio remove pra cair no default do tipo.
           const current = (n.data ?? {}) as Record<string, unknown>;
-          const meta: Record<string, unknown> = {};
-          for (const k of EDITOR_META_KEYS) {
-            if (k in current) meta[k] = current[k];
+          const preserved: Record<string, unknown> = {};
+          if ("variant" in current) preserved.variant = current.variant;
+          if ("nodeType" in current) preserved.nodeType = current.nodeType;
+          if (nextMeta) {
+            const t = nextMeta.title?.trim();
+            const d = nextMeta.description?.trim();
+            if (t) preserved.title = t;
+            if (d) preserved.description = d;
+          } else {
+            // Visual node: preserva title/description antigos se houver.
+            if ("title" in current) preserved.title = current.title;
+            if ("description" in current) preserved.description = current.description;
           }
-          return { ...n, data: { ...meta, ...next } };
+          return { ...n, data: { ...preserved, ...next } };
         }),
       );
     },
@@ -270,7 +284,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         open={configState !== null}
         onOpenChange={(o) => !o && setConfigState(null)}
         nodeType={configState?.nodeType}
-        nodeTitle={configState?.nodeTitle}
+        meta={configState?.meta}
         values={configState?.values ?? {}}
         onSave={handleConfigSave}
       />
