@@ -1,0 +1,66 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": [
+    "typescript",
+    "unicorn",
+    "oxc",
+    "react",
+    "react-perf",
+    "jsx-a11y",
+    "import",
+    "promise"
+  ],
+  "categories": {
+    "correctness": "error",
+    "suspicious": "warn",
+    "perf": "warn"
+  },
+  "env": {
+    "builtin": true,
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "settings": {
+    "react": {
+      "version": "19.2.6"
+    }
+  },
+  "rules": {
+    "no-empty-pattern": "off",
+    "react/jsx-key": "error",
+    "react/react-in-jsx-scope": "off",
+    "react/no-array-index-key": "warn",
+    "react/no-children-prop": "error",
+    "react/no-danger-with-children": "error",
+    "react/no-direct-mutation-state": "error",
+    "react/no-find-dom-node": "error",
+    "react/no-is-mounted": "error",
+    "react/no-render-return-value": "error",
+    "react/no-string-refs": "error",
+    "react/no-unescaped-entities": "off",
+    "react-perf/jsx-no-new-object-as-prop": "off",
+    "react-perf/jsx-no-new-array-as-prop": "off",
+    "react-perf/jsx-no-new-function-as-prop": "off",
+    "react-perf/jsx-no-jsx-as-prop": "off",
+    "jsx-a11y/anchor-is-valid": "warn",
+    "jsx-a11y/prefer-tag-over-role": "off",
+    "import/no-duplicates": "error",
+    "import/no-self-import": "error",
+    "import/no-unassigned-import": "off",
+    "no-shadow": "off",
+    "react/jsx-no-constructed-context-values": "off",
+    "typescript/no-unused-vars": ["warn", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "typescript/consistent-type-imports": "warn",
+    "unicorn/no-array-for-each": "off",
+    "unicorn/prefer-node-protocol": "error"
+  },
+  "ignorePatterns": [
+    "build/**",
+    "node_modules/**",
+    ".react-router/**",
+    "public/**",
+    "*.config.js",
+    "*.config.ts"
+  ]
+}

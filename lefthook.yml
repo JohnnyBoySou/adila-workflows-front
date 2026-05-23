@@ -1,0 +1,28 @@
+# Lefthook — git hooks gerenciados.
+#
+# Instalar / reinstalar nos hooks do .git após clonar:
+#   bunx lefthook install
+#
+# Pular tudo em um commit específico:
+#   LEFTHOOK=0 git commit ...
+#
+# Pular um hook específico:
+#   LEFTHOOK_EXCLUDE=lint git commit ...
+
+pre-commit:
+  parallel: true
+  jobs:
+    - name: format
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs,json,jsonc,css}"
+      run: bunx oxfmt {staged_files}
+      stage_fixed: true
+
+    - name: lint
+      glob: "*.{ts,tsx,js,jsx,mjs,cjs}"
+      run: bunx oxlint --fix {staged_files}
+      stage_fixed: true
+
+pre-push:
+  jobs:
+    - name: typecheck
+      run: bun run typecheck
