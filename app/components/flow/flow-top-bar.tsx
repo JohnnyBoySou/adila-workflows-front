@@ -1,11 +1,14 @@
 import { Link } from "react-router";
-import { ChevronLeft, History, Info, PenLine, Play, Save } from "lucide-react";
+import { Check, ChevronLeft, History, Info, Loader2, PenLine, Play, Save } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import { cn } from "~/lib/utils";
 
 export type FlowTab = "editor" | "executions";
+
+export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
 type FlowTopBarProps = {
   tab: FlowTab;
@@ -13,7 +16,15 @@ type FlowTopBarProps = {
   onInfoClick: () => void;
   onSave?: () => void;
   onRun?: () => void;
+  saveState?: SaveState;
+  /** Timestamp do último save bem-sucedido (ms). */
+  lastSavedAt?: number | null;
 };
+
+const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
+  hour: "2-digit",
+  minute: "2-digit",
+});
 
 /**
  * Barra flutuante no topo do editor, centralizada horizontalmente.
@@ -21,7 +32,28 @@ type FlowTopBarProps = {
  * e ações principais (Salvar/Executar). Tudo icon‑only — `aria-label`
  * + `title` cobrem acessibilidade e tooltip nativo.
  */
-export function FlowTopBar({ tab, onTabChange, onInfoClick, onSave, onRun }: FlowTopBarProps) {
+export function FlowTopBar({
+  tab,
+  onTabChange,
+  onInfoClick,
+  onSave,
+  onRun,
+  saveState = "idle",
+  lastSavedAt,
+}: FlowTopBarProps) {
+  const dirty = saveState === "dirty";
+  const saving = saveState === "saving";
+  const savedLabel =
+    saveState === "saved" && lastSavedAt
+      ? `Salvo · ${timeFormatter.format(new Date(lastSavedAt))}`
+      : saveState === "saving"
+        ? "Salvando…"
+        : saveState === "error"
+          ? "Falha ao salvar"
+          : dirty
+            ? "Alterações não salvas"
+            : null;
+
   return (
     <div className="pointer-events-none absolute inset-x-0 top-4 z-10 flex justify-center">
       <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-border bg-card/95 p-1 shadow-md backdrop-blur supports-[backdrop-filter]:bg-card/80">
@@ -70,13 +102,38 @@ export function FlowTopBar({ tab, onTabChange, onInfoClick, onSave, onRun }: Flo
         <Button
           variant="ghost"
           size="icon-sm"
-          className="rounded-full"
+          className={cn("relative rounded-full", dirty && "text-foreground")}
           onClick={onSave}
           aria-label="Salvar"
-          title="Salvar"
+          title={savedLabel ?? "Salvar"}
+          disabled={saving}
         >
-          <Save className="size-4" />
+          {saving ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : saveState === "saved" ? (
+            <Check className="size-4" />
+          ) : (
+            <Save className="size-4" />
+          )}
+          {dirty && (
+            <span
+              aria-hidden
+              className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500"
+            />
+          )}
         </Button>
+
+        {savedLabel && (
+          <span
+            className={cn(
+              "px-2 text-[11px] tabular-nums whitespace-nowrap text-muted-foreground",
+              saveState === "error" && "text-destructive",
+            )}
+          >
+            {savedLabel}
+          </span>
+        )}
+
         <Button
           size="icon-sm"
           className="rounded-full"

@@ -12,7 +12,7 @@
     "format": "oxfmt",
     "format:check": "oxfmt --check",
     "check": "bun run format:check && bun run lint && bun run typecheck",
-    "prepare": "lefthook install"
+    "prepare": "test -d .git && lefthook install || true"
   },
   "dependencies": {
     "@better-fetch/fetch": "^1.1.21",
