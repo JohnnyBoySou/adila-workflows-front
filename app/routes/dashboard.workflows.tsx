@@ -1,5 +1,6 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ChevronDown,
   Copy,
   FolderPlus,
   LayoutGrid,
@@ -11,7 +12,7 @@ import {
   Plus,
   Search,
   Upload,
-  X,
+  X
 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
@@ -71,6 +72,7 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
+import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { WorkflowCreateDialog } from "~/components/workflow/workflow-create-dialog";
 import { WorkflowMoveDialog } from "~/components/workflow/workflow-move-dialog";
 import { WorkflowRenameDialog } from "~/components/workflow/workflow-rename-dialog";
@@ -308,18 +310,11 @@ export default function WorkflowsListRoute() {
 
         <div className="flex items-center gap-2">
           <ViewToggle value={view} onChange={(v) => setParam("view", v === "grid" ? null : v)} />
-          <Button variant="outline" size="sm" onClick={() => setFolderDialogOpen(true)}>
-            <FolderPlus className="size-4" />
-            Nova pasta
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
-            <Upload className="size-4" />
-            Importar do n8n
-          </Button>
-          <Button size="sm" onClick={() => setWorkflowDialogOpen(true)}>
-            <Plus className="size-4" />
-            Novo workflow
-          </Button>
+          <CreateActionsMenu
+            onNewWorkflow={() => setWorkflowDialogOpen(true)}
+            onNewFolder={() => setFolderDialogOpen(true)}
+            onImportN8n={() => setImportDialogOpen(true)}
+          />
         </div>
       </div>
 
@@ -425,6 +420,45 @@ export default function WorkflowsListRoute() {
         onImported={(wf) => navigate(`/flow/${wf.id}`)}
       />
     </div>
+  );
+}
+
+/** Menu de criação: workflow, pasta e importação n8n num único botão. */
+function CreateActionsMenu({
+  onNewWorkflow,
+  onNewFolder,
+  onImportN8n,
+}: {
+  onNewWorkflow: () => void;
+  onNewFolder: () => void;
+  onImportN8n: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button className="flex items-center justify-center">
+          Criar 
+          <div className="flex  items-center justify-center">
+          <ChevronDown className="size-4 " />
+          </div>
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-52">
+        <DropdownMenuItem onSelect={onNewWorkflow}>
+          <Plus className="size-4" />
+          Novo workflow
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onNewFolder}>
+          <FolderPlus className="size-4" />
+          Nova pasta
+        </DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem onSelect={onImportN8n}>
+          <Upload className="size-4" />
+          Importar do n8n
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -575,7 +609,7 @@ function FiltersBar({
         value={status ?? "all"}
         onValueChange={(v) => onStatusChange(v === "all" ? null : (v as WorkflowStatus))}
       >
-        <SelectTrigger size="sm" className="w-[160px]" aria-label="Filtrar por status">
+        <SelectTrigger className="w-[160px]" aria-label="Filtrar por status">
           <SelectValue placeholder="Status" />
         </SelectTrigger>
         <SelectContent>
@@ -947,42 +981,16 @@ function ViewToggle({
   onChange: (v: ViewMode) => void;
 }) {
   return (
-    <div
-      role="group"
-      aria-label="Modo de visualização"
-      className="inline-flex items-center rounded-md border bg-background p-0.5"
-    >
-      <button
-        type="button"
-        aria-pressed={value === "grid"}
-        aria-label="Cards"
-        title="Cards"
-        onClick={() => onChange("grid")}
-        className={cn(
-          "inline-flex size-7 cursor-pointer items-center justify-center rounded-sm transition-colors",
-          value === "grid"
-            ? "bg-muted text-foreground"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <LayoutGrid className="size-4" />
-      </button>
-      <button
-        type="button"
-        aria-pressed={value === "table"}
-        aria-label="Tabela"
-        title="Tabela"
-        onClick={() => onChange("table")}
-        className={cn(
-          "inline-flex size-7 cursor-pointer items-center justify-center rounded-sm transition-colors",
-          value === "table"
-            ? "bg-muted text-foreground"
-            : "text-muted-foreground hover:text-foreground",
-        )}
-      >
-        <List className="size-4" />
-      </button>
-    </div>
+      <Tabs>
+        <TabsList >
+          <TabsTrigger onClick={() => onChange("grid")} className="data-active:bg-muted" value="grid">
+            <LayoutGrid className="size-4" />
+          </TabsTrigger>
+          <TabsTrigger onClick={() => onChange("table")} className="data-active:bg-muted" value="table">
+            <List className="size-4" />
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
   );
 }
 

@@ -11,7 +11,10 @@
  *     A engine trata `mode === "builder"` como SQL (cai no `else` do switch).
  *
  * Shape persistido em `values`:
- *   connectionId: string       (uuid de uma database_connection registrada)
+ *   connectionRef: string      (nome lógico — "db_main"; resolvido em runtime
+ *                              com fallback env-específico → default)
+ *   connectionId?: string      (legado — UUID; mantido pra compat de workflows
+ *                              antigos; novos sempre gravam connectionRef)
  *   mode: "sql" | "orm" | "builder"
  *   query?: string             (sql/builder)
  *   params?: unknown[]         (sql/builder)
@@ -250,8 +253,14 @@ export function PostgresPanel({
   meta,
   onMetaChange,
 }: CustomPanelProps) {
-  const connectionId =
-    typeof values.connectionId === "string" ? values.connectionId : undefined;
+  // `connectionRef` é a referência canônica (nome lógico). `connectionId`
+  // (UUID) é aceito como fallback pra workflows criados antes do rename.
+  const connectionRef =
+    typeof values.connectionRef === "string"
+      ? values.connectionRef
+      : typeof values.connectionId === "string"
+        ? values.connectionId
+        : undefined;
   const mode: PgUiMode =
     values.mode === "orm" ? "orm" : values.mode === "builder" ? "builder" : "sql";
 
@@ -264,17 +273,35 @@ export function PostgresPanel({
   const [managerOpen, setManagerOpen] = useState(false);
 
   // Schema introspectado da connection — alimenta o d.ts no modo ORM.
+  // O endpoint exige UUID; quando o ref é um nome, listamos as connections
+  // e pegamos o UUID do default (env=null) com aquele nome.
   const [schema, setSchema] = useState<dbConnections.DatabaseSchema | null>(null);
   useEffect(() => {
-    if (!workflowId || !connectionId) {
+    if (!workflowId || !connectionRef) {
       setSchema(null);
       return;
     }
     let cancelled = false;
-    dbConnections
-      .schema(workflowId, connectionId)
-      .then((s) => {
-        if (!cancelled) setSchema(s);
+    const looksUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
+      connectionRef,
+    );
+    const resolveId = async (): Promise<string | null> => {
+      if (looksUuid) return connectionRef;
+      const rows = await dbConnections.list(workflowId, { kind: "postgres" });
+      // Prefere o default (env=null) — é o que serve de "esqueleto" do schema.
+      const match = rows.find((r) => r.name === connectionRef && !r.environmentId)
+        ?? rows.find((r) => r.name === connectionRef);
+      return match?.id ?? null;
+    };
+    resolveId()
+      .then((id) => {
+        if (cancelled || !id) {
+          if (!cancelled) setSchema(null);
+          return;
+        }
+        return dbConnections.schema(workflowId, id).then((s) => {
+          if (!cancelled) setSchema(s);
+        });
       })
       .catch(() => {
         // Schema introspection falhou — segue sem autocomplete tipado.
@@ -283,15 +310,15 @@ export function PostgresPanel({
     return () => {
       cancelled = true;
     };
-  }, [workflowId, connectionId]);
+  }, [workflowId, connectionRef]);
 
   // Validação
   useEffect(() => {
     onError?.(
-      "connectionId",
-      !connectionId ? "Selecione uma connection cadastrada." : null,
+      "connectionRef",
+      !connectionRef ? "Selecione uma connection cadastrada." : null,
     );
-  }, [connectionId, onError]);
+  }, [connectionRef, onError]);
 
   useEffect(() => {
     if (mode === "sql") {
@@ -343,8 +370,10 @@ export function PostgresPanel({
 
         <ConnectionPicker
           kind="postgres"
-          value={connectionId}
-          onChange={(id) => onChange({ connectionId: id })}
+          value={connectionRef}
+          // Emite nome lógico (valueKind default = "name"); zeramos o alias
+          // legado `connectionId` pra evitar dois campos divergentes na config.
+          onChange={(ref) => onChange({ connectionRef: ref, connectionId: undefined })}
           onManageClick={() => setManagerOpen(true)}
           label="Connection"
           required
@@ -406,7 +435,7 @@ export function PostgresPanel({
               </Badge>
             )}
           </div>
-          {!connectionId ? (
+          {!connectionRef ? (
             <p className="text-[11px] text-muted-foreground">
               Selecione uma connection pra carregar as tabelas.
             </p>

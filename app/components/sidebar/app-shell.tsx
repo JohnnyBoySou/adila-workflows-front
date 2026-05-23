@@ -5,6 +5,7 @@ import {
   LayoutDashboard,
   LifeBuoy,
   LogOut,
+  Server,
   Settings,
   User,
   Users,
@@ -62,6 +63,7 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { title: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
   { title: "Workflows", to: "/dashboard/workflows", icon: Workflow },
+  { title: "Ambientes", to: "/dashboard/environments", icon: Server },
   { title: "Usuários", to: "/dashboard/users", icon: Users },
 ];
 

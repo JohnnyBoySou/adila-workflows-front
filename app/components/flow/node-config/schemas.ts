@@ -77,6 +77,7 @@ const http_request: NodeConfigSchema = {
   description: "Configuração completa: request, headers, body, autenticação e opções avançadas.",
   fields: [],
   customPanel: HttpRequestPanel,
+  customPanelOwnsMeta: true,
 };
 
 // Painel dedicado (PostgresPanel): Monaco SQL/TS, snippets, ctx inspector.

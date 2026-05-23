@@ -26,6 +26,7 @@ import { cn } from "~/lib/utils";
 import { useExecutionStore, type NodeExecutionStatus } from "~/stores/execution";
 import { useIsPinned } from "~/stores/pinned-data";
 import { useWorkflowId } from "./workflow-context";
+import { NODE_ICON_MAP } from "./node-library";
 
 /**
  * Evento global emitido quando o usuário pede "play" num nó via toolbar.
@@ -78,9 +79,14 @@ const VARIANT_META: Record<
 function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) {
   const variant = data.variant ?? "action";
   const meta = VARIANT_META[variant];
-  const Icon = meta.icon;
+  // Ícone específico do nodeType tem prioridade; cai no ícone genérico do variant.
+  const nodeIconEntry = data.nodeType ? NODE_ICON_MAP[data.nodeType] : undefined;
+  const Icon = nodeIconEntry?.icon ?? meta.icon;
+  const iconColor = nodeIconEntry?.color ?? meta.iconColor;
   // Seletor fino — só este nó re-renderiza quando o status dele muda.
-  const executionStatus = useExecutionStore((s) => s.stepsByNodeId[id]?.status);
+  const executionStatus = useExecutionStore(
+    (s) => (s as unknown as { stepsByNodeId: Record<string, { status: NodeExecutionStatus }> }).stepsByNodeId[id]?.status,
+  );
   const executionRing = executionStatus ? EXECUTION_RING[executionStatus] : null;
   // Pin: lê o workflowId do contexto do canvas e consulta o store por id.
   // Nó fora do provider (improvável) cai num `null` e nunca aparece pinado.
@@ -179,7 +185,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
       )}
       <CardHeader className="flex flex-row items-center gap-2 px-3">
         <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", meta.iconBg)}>
-          <Icon className={cn("size-4", meta.iconColor)} />
+          <Icon className={cn("size-4", iconColor)} />
         </span>
         <CardTitle className="text-sm">{data.title}</CardTitle>
       </CardHeader>

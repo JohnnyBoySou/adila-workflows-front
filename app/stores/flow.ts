@@ -24,8 +24,12 @@ const BG_VARIANTS: BackgroundVariant[] = [
 export type EdgeStyle = {
   /** Tipo da curva da edge (default/bezier/straight/step/smoothstep/simplebezier). */
   type: ConnectionLineType;
-  /** Cor sólida; usa hex pra ser plug-and-play com SVG stroke. */
+  /** Cor sólida (ou primeira parada quando `gradient: true`). */
   color: string;
+  /** Aplica gradiente linear de `color` → `colorEnd`. */
+  gradient: boolean;
+  /** Segunda parada do gradiente. Ignorado quando `gradient: false`. */
+  colorEnd: string;
   /** Anima o pontilhado/fluxo da edge. */
   animated: boolean;
   /** Aplica `stroke-dasharray` na edge. */
@@ -39,6 +43,8 @@ export type EdgeStyle = {
 export const DEFAULT_EDGE_STYLE: EdgeStyle = {
   type: ConnectionLineType.Bezier,
   color: "#94a3b8",
+  gradient: false,
+  colorEnd: "#0ea5e9",
   animated: true,
   dashed: false,
   thickness: 1.5,
@@ -99,6 +105,17 @@ export const useFlowStore = create<FlowState>()(
         backgroundVariant: s.backgroundVariant,
         edgeStyle: s.edgeStyle,
       }),
+      // Merge raso por padrão deixa campos novos do `edgeStyle` como
+      // `undefined` quando o localStorage tem uma versão antiga do shape.
+      // Forçamos um merge profundo do edgeStyle pra herdar defaults novos.
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<FlowState>;
+        return {
+          ...current,
+          ...p,
+          edgeStyle: { ...current.edgeStyle, ...(p.edgeStyle ?? {}) },
+        };
+      },
     },
   ),
 );

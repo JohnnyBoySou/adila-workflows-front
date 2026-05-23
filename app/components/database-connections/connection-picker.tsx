@@ -27,11 +27,20 @@ import * as dbConnections from "~/services/database-connections";
 interface ConnectionPickerProps {
   kind: dbConnections.DatabaseConnectionKind;
   value: string | undefined;
-  onChange: (connectionId: string | undefined) => void;
+  onChange: (ref: string | undefined) => void;
   /** Botão "Gerenciar" abre o dialog de CRUD; controlado pelo caller. */
   onManageClick?: () => void;
   label?: string;
   required?: boolean;
+  /**
+   * Como o `value` é persistido na config do node:
+   *  - "name" (default novo): emite o nome lógico ("db_main"). Em runtime o
+   *    worker resolve com fallback default → env-specific, permitindo
+   *    promover a mesma versão entre ambientes sem reescrever o canvas.
+   *  - "id": modo legado — emite o UUID da linha (pinned). Use só pra
+   *    workflows antigos que ainda não migraram.
+   */
+  valueKind?: "id" | "name";
 }
 
 export function ConnectionPicker({
@@ -41,6 +50,7 @@ export function ConnectionPicker({
   onManageClick,
   label = "Connection",
   required = false,
+  valueKind = "name",
 }: ConnectionPickerProps) {
   const workflowId = useWorkflowId();
   const [items, setItems] = useState<dbConnections.DatabaseConnection[]>([]);
@@ -67,7 +77,28 @@ export function ConnectionPicker({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workflowId, kind]);
 
-  const selected = items.find((i) => i.id === value);
+  // Em modo "name", colapsamos múltiplas linhas com o mesmo nome lógico
+  // (default + overrides por env) numa única entrada — o nome é a referência
+  // canônica que o node guarda. Preferimos a linha de default (env=null) pro
+  // metadata mostrado, mas como o emit é só o name, qualquer uma serve.
+  const listed =
+    valueKind === "name"
+      ? Array.from(
+          items
+            .reduce<Map<string, dbConnections.DatabaseConnection>>((acc, c) => {
+              const existing = acc.get(c.name);
+              if (!existing || (!c.environmentId && existing.environmentId)) {
+                acc.set(c.name, c);
+              }
+              return acc;
+            }, new Map())
+            .values(),
+        )
+      : items;
+
+  const matchValue = (c: dbConnections.DatabaseConnection) =>
+    valueKind === "name" ? c.name : c.id;
+  const selected = listed.find((c) => matchValue(c) === value);
   const valueMissing = value && !selected;
 
   return (
@@ -117,17 +148,25 @@ export function ConnectionPicker({
           />
         </SelectTrigger>
         <SelectContent>
-          {items.map((c) => (
-            <SelectItem key={c.id} value={c.id}>
-              <div className="flex items-center gap-2">
-                <Database className="size-3.5 shrink-0 opacity-60" />
-                <span className="font-medium">{c.name}</span>
-                <Badge variant="outline" className="ml-auto h-4 px-1 text-[10px]">
-                  {c.environmentId ? "env" : "default"}
-                </Badge>
-              </div>
-            </SelectItem>
-          ))}
+          {listed.map((c) => {
+            const v = matchValue(c);
+            // Em modo "name" todas as variantes do mesmo name colapsaram numa
+            // entrada — o badge "ref" sinaliza que a resolução é por nome com
+            // fallback de env, não pinada na linha.
+            const badgeLabel =
+              valueKind === "name" ? "ref" : c.environmentId ? "env" : "default";
+            return (
+              <SelectItem key={c.id} value={v}>
+                <div className="flex items-center gap-2">
+                  <Database className="size-3.5 shrink-0 opacity-60" />
+                  <span className="font-medium">{c.name}</span>
+                  <Badge variant="outline" className="ml-auto h-4 px-1 text-[10px]">
+                    {badgeLabel}
+                  </Badge>
+                </div>
+              </SelectItem>
+            );
+          })}
         </SelectContent>
       </Select>
 

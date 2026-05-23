@@ -168,3 +168,14 @@
     @apply font-sans;
   }
 }
+
+/* Animação alternativa para edges no canvas quando "Animada" está ligada
+   mas "Tracejada" não — pulsa a opacidade pra dar sensação de fluxo sem
+   forçar dashes (que é como o `animated` nativo do React Flow funciona). */
+@keyframes wf-edge-pulse {
+  0%, 100% { stroke-opacity: 1; }
+  50% { stroke-opacity: 0.45; }
+}
+.wf-edge-pulse .react-flow__edge-path {
+  animation: wf-edge-pulse 1.6s ease-in-out infinite;
+}

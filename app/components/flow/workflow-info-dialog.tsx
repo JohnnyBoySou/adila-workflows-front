@@ -101,10 +101,14 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
     }
   }, [open, info]);
 
-  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
+  function commit() {
     onSave({ name: name.trim() || "Workflow sem título", description: description.trim() });
     onOpenChange(false);
+  }
+
+  function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    commit();
   }
 
   return (
@@ -171,42 +175,21 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
                 </Select>
               </Row>
 
-              <Row label="Cor das linhas">
-                <div className="flex items-center gap-2">
-                  <div className="flex flex-wrap gap-1.5">
-                    {COLOR_SWATCHES.map((c) => {
-                      const active = c.toLowerCase() === edgeStyle.color.toLowerCase();
-                      return (
-                        <button
-                          key={c}
-                          type="button"
-                          onClick={() => setEdgeStyle({ color: c })}
-                          aria-label={`Cor ${c}`}
-                          className={cn(
-                            "relative size-6 cursor-pointer rounded-full border border-border transition-transform hover:scale-110",
-                            active && "ring-2 ring-ring ring-offset-2 ring-offset-background",
-                          )}
-                          style={{ backgroundColor: c }}
-                        >
-                          {active && (
-                            <Check
-                              className="absolute inset-0 m-auto size-3.5 text-white mix-blend-difference"
-                              aria-hidden
-                            />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <input
-                    type="color"
-                    value={edgeStyle.color}
-                    onChange={(e) => setEdgeStyle({ color: e.target.value })}
-                    aria-label="Seletor de cor custom"
-                    className="size-7 cursor-pointer rounded border border-border bg-transparent"
-                  />
-                </div>
+              <Row label={edgeStyle.gradient ? "Cor inicial" : "Cor"}>
+                <ColorPicker
+                  value={edgeStyle.color}
+                  onChange={(c) => setEdgeStyle({ color: c })}
+                />
               </Row>
+
+              {edgeStyle.gradient && (
+                <Row label="Cor final">
+                  <ColorPicker
+                    value={edgeStyle.colorEnd}
+                    onChange={(c) => setEdgeStyle({ colorEnd: c })}
+                  />
+                </Row>
+              )}
 
               <Row label="Espessura">
                 <div className="flex items-center gap-3">
@@ -244,6 +227,12 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
                     onClick={() => setEdgeStyle({ arrow: !edgeStyle.arrow })}
                   >
                     Seta
+                  </ToggleChip>
+                  <ToggleChip
+                    active={edgeStyle.gradient}
+                    onClick={() => setEdgeStyle({ gradient: !edgeStyle.gradient })}
+                  >
+                    Gradiente
                   </ToggleChip>
                 </div>
               </Row>
@@ -291,7 +280,7 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
             <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
               Cancelar
             </Button>
-            <Button type="submit" form="workflow-info-form">
+            <Button type="button" onClick={commit}>
               Salvar
             </Button>
           </DialogFooter>
@@ -335,17 +324,67 @@ function ToggleChip({
   );
 }
 
+function ColorPicker({ value, onChange }: { value: string; onChange: (color: string) => void }) {
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex flex-wrap gap-1.5">
+        {COLOR_SWATCHES.map((c) => {
+          const active = c.toLowerCase() === value.toLowerCase();
+          return (
+            <button
+              key={c}
+              type="button"
+              onClick={() => onChange(c)}
+              aria-label={`Cor ${c}`}
+              className={cn(
+                "relative size-6 cursor-pointer rounded-full border border-border transition-transform hover:scale-110",
+                active && "ring-2 ring-ring ring-offset-2 ring-offset-background",
+              )}
+              style={{ backgroundColor: c }}
+            >
+              {active && (
+                <Check
+                  className="absolute inset-0 m-auto size-3.5 text-white mix-blend-difference"
+                  aria-hidden
+                />
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <input
+        type="color"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        aria-label="Seletor de cor custom"
+        className="size-7 cursor-pointer rounded border border-border bg-transparent"
+      />
+    </div>
+  );
+}
+
 function EdgePreview({ style }: { style: EdgeStyle }) {
   const dashArray = style.dashed ? "6 4" : undefined;
   const markerId = "edge-preview-arrow";
+  const gradientId = "edge-preview-gradient";
+  const stroke = style.gradient ? `url(#${gradientId})` : style.color;
+  // Cor da seta: gradient não funciona em marker fill em todos browsers, então
+  // usa a cor final (que é o que o usuário vê no destino).
+  const markerColor = style.gradient ? style.colorEnd : style.color;
   return (
     <svg
       viewBox="0 0 200 40"
       className="h-10 w-full rounded-md border border-border bg-muted/30"
       aria-hidden
     >
-      {style.arrow && (
-        <defs>
+      <defs>
+        {style.gradient && (
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0%" stopColor={style.color} />
+            <stop offset="100%" stopColor={style.colorEnd} />
+          </linearGradient>
+        )}
+        {style.arrow && (
           <marker
             id={markerId}
             viewBox="0 0 10 10"
@@ -355,24 +394,32 @@ function EdgePreview({ style }: { style: EdgeStyle }) {
             markerHeight="6"
             orient="auto-start-reverse"
           >
-            <path d="M0 0 L10 5 L0 10 z" fill={style.color} />
+            <path d="M0 0 L10 5 L0 10 z" fill={markerColor} />
           </marker>
-        </defs>
-      )}
+        )}
+      </defs>
       <path
         d={pathForType(style.type)}
         fill="none"
-        stroke={style.color}
+        stroke={stroke}
         strokeWidth={style.thickness}
         strokeDasharray={dashArray}
         {...(style.arrow ? { markerEnd: `url(#${markerId})` } : {})}
       >
-        {style.animated && (
+        {style.animated && style.dashed && (
           <animate
             attributeName="stroke-dashoffset"
             from="0"
-            to={style.dashed ? "-20" : "-12"}
+            to="-20"
             dur="0.6s"
+            repeatCount="indefinite"
+          />
+        )}
+        {style.animated && !style.dashed && (
+          <animate
+            attributeName="stroke-opacity"
+            values="1;0.45;1"
+            dur="1.6s"
             repeatCount="indefinite"
           />
         )}

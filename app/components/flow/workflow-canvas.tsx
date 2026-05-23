@@ -40,10 +40,35 @@ import { useFlowStore } from "~/stores/flow";
 import { useExecutionStore } from "~/stores/execution";
 import { pinnedDataApi, usePinnedData } from "~/stores/pinned-data";
 import { Button } from "~/components/ui/button";
+import { cn } from "~/lib/utils";
 
 // Campos de `node.data` que pertencem ao editor, não ao engine — não
 // devem aparecer no dialog de config nem ser sobrescritos por ele.
 const EDITOR_META_KEYS = new Set(["title", "description", "variant", "nodeType"]);
+
+// ID global do gradient usado por todas as edges quando `edgeStyle.gradient`
+// está ligado. Referenciado via `stroke="url(#...)"`. Browsers resolvem
+// fragment refs cross-SVG no mesmo document, então as defs podem viver
+// numa svg irmã da do React Flow.
+const EDGE_GRADIENT_ID = "workflow-edge-gradient";
+
+function EdgeGradientDefs({ from, to }: { from: string; to: string }) {
+  return (
+    <svg
+      width={0}
+      height={0}
+      aria-hidden
+      style={{ position: "absolute", width: 0, height: 0, overflow: "hidden" }}
+    >
+      <defs>
+        <linearGradient id={EDGE_GRADIENT_ID} x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%" stopColor={from} />
+          <stop offset="100%" stopColor={to} />
+        </linearGradient>
+      </defs>
+    </svg>
+  );
+}
 
 export type WorkflowCanvasHandle = {
   /** Snapshot do canvas no shape persistido — chamado no save. */
@@ -113,42 +138,54 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
 
   // Opções aplicadas a novas edges (criadas via conexão de handles). Edges
   // existentes herdam via style override no `edges` derivado abaixo.
+  // Quando `gradient: true`, o stroke aponta pra um `<linearGradient>` global
+  // injetado abaixo via `<EdgeGradientDefs>`. O marker da seta não suporta
+  // url() de gradient na maioria dos browsers, então cai pra `color` sólido.
+  const strokeRef = edgeStyle.gradient ? `url(#${EDGE_GRADIENT_ID})` : edgeStyle.color;
+  // Animação nativa do React Flow é "moving dashes" — só faz sentido com
+  // a edge tracejada. Quando o usuário pediu animação numa linha sólida,
+  // usamos uma classe própria (pulse de opacidade) pra desacoplar do dash.
+  const rfAnimated = edgeStyle.animated && edgeStyle.dashed;
+  const pulseClass = edgeStyle.animated && !edgeStyle.dashed ? "wf-edge-pulse" : undefined;
+
   const defaultEdgeOptions = useMemo<DefaultEdgeOptions>(
     () => ({
       type: edgeStyle.type,
-      animated: edgeStyle.animated,
+      animated: rfAnimated,
+      ...(pulseClass ? { className: pulseClass } : {}),
       style: {
-        stroke: edgeStyle.color,
+        stroke: strokeRef,
         strokeWidth: edgeStyle.thickness,
-        ...(edgeStyle.dashed ? { strokeDasharray: "6 4" } : {}),
+        strokeDasharray: edgeStyle.dashed ? "6 4" : "none",
       },
       ...(edgeStyle.arrow
-        ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.color } }
+        ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.colorEnd } }
         : {}),
     }),
-    [edgeStyle],
+    [edgeStyle, strokeRef, rfAnimated, pulseClass],
   );
 
-  // Aplica o estilo do store por cima dos campos individuais da edge —
-  // edges hidratadas do backend não carregam style, então isso pinta tudo
-  // com a preferência atual sem mutar a definition persistida.
   const styledEdges = useMemo<Edge[]>(
     () =>
       edges.map((e) => ({
         ...e,
-        type: e.type ?? edgeStyle.type,
-        animated: e.animated ?? edgeStyle.animated,
+        type: edgeStyle.type,
+        animated: rfAnimated,
+        className: cn(e.className, pulseClass),
         style: {
-          stroke: edgeStyle.color,
-          strokeWidth: edgeStyle.thickness,
-          ...(edgeStyle.dashed ? { strokeDasharray: "6 4" } : {}),
           ...(e.style ?? {}),
+          stroke: strokeRef,
+          strokeWidth: edgeStyle.thickness,
+          strokeDasharray: edgeStyle.dashed ? "6 4" : "none",
         },
-        ...(edgeStyle.arrow && !e.markerEnd
-          ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.color } }
-          : {}),
+        markerEnd: edgeStyle.arrow
+          ? {
+              type: MarkerType.ArrowClosed,
+              color: edgeStyle.gradient ? edgeStyle.colorEnd : edgeStyle.color,
+            }
+          : undefined,
       })),
-    [edges, edgeStyle],
+    [edges, edgeStyle, strokeRef, rfAnimated, pulseClass],
   );
 
   const onConnect = useCallback(
@@ -347,6 +384,9 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
 
   return (
     <WorkflowIdProvider value={workflowId}>
+      {edgeStyle.gradient && (
+        <EdgeGradientDefs from={edgeStyle.color} to={edgeStyle.colorEnd} />
+      )}
       <ReactFlow
         nodes={nodes}
         edges={styledEdges}

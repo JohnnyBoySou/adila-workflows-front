@@ -22,9 +22,6 @@ import { FieldRenderer } from "./node-config/fields";
 import { getNodeConfigSchema } from "./node-config/schemas";
 import type { FieldDef, NodeConfigSchema } from "./node-config/types";
 import { cn } from "~/lib/utils";
-import { Input } from "~/components/ui/input";
-import { Label } from "~/components/ui/label";
-import { Textarea } from "~/components/ui/textarea";
 import { useWorkflowId } from "./workflow-context";
 import { WebhookTriggerExtras } from "./webhook-trigger-extras";
 
@@ -183,34 +180,45 @@ export function NodeConfigDialog({
                 : "sm:max-w-2xl",
         )}
       >
-        <DialogHeader className="border-b border-border pb-3">
-          <DialogTitle asChild>
-            <div className="flex items-center gap-2 text-base">
-              {showMeta ? (
+        <DialogHeader className="-mx-4 -mt-4 rounded-t-xl border-b border-border bg-muted/50 px-4 pb-3 pt-4">
+          {showMeta ? (
+            <div className="space-y-1 pr-6">
+              <DialogTitle asChild>
                 <EditableTitle
                   value={metaDraft.title ?? ""}
                   fallback={schema.title}
                   onChange={(next) => setMetaDraft({ ...metaDraft, title: next })}
                 />
-              ) : (
-                <span>{currentTitle}</span>
-              )}
-              {showMeta && currentTitle !== schema.title && (
-                <span className="text-xs font-normal text-muted-foreground">· {schema.title}</span>
-              )}
+              </DialogTitle>
+              <EditableDescription
+                value={metaDraft.description ?? ""}
+                placeholder="Duplo-clique para adicionar uma descrição no card"
+                onChange={(next) => setMetaDraft({ ...metaDraft, description: next })}
+              />
             </div>
-          </DialogTitle>
-          {schema.description && (
-            <DialogDescription className="text-xs">{schema.description}</DialogDescription>
+          ) : (
+            <>
+              <DialogTitle>{currentTitle}</DialogTitle>
+              {schema.description && (
+                <DialogDescription className="text-xs">{schema.description}</DialogDescription>
+              )}
+            </>
           )}
         </DialogHeader>
 
-        <div className="flex-1 overflow-y-auto px-1 py-4">
-          {showMeta && !schema.customPanelOwnsMeta && (
-            <MetaFields meta={metaDraft} onChange={(next) => setMetaDraft(next)} />
+        <div
+          className={cn(
+            "flex-1 overflow-y-auto py-4",
+            nodeType === "http_request" ? "px-0" : "px-1",
           )}
+        >
           {schema.customPanel ? (
-            <div className={cn(schema.dialogSize === "full" ? "h-full px-3" : "px-3")}>
+            <div
+              className={cn(
+                schema.dialogSize === "full" && "h-full",
+                nodeType === "http_request" ? "px-1" : "px-3",
+              )}
+            >
               <schema.customPanel
                 values={draft}
                 onChange={(patch) =>
@@ -255,7 +263,7 @@ export function NodeConfigDialog({
           )}
         </div>
 
-        <DialogFooter className="flex-col gap-2 border-t border-border pt-3 sm:flex-row sm:items-center sm:justify-end">
+        <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {hasErrors && (
             <p className="mr-auto text-[11px] text-destructive">
               Corrija os campos destacados para salvar.
@@ -273,11 +281,7 @@ export function NodeConfigDialog({
   );
 }
 
-/**
- * Título inline-editável: duplo-clique troca para `<input>`; Enter ou blur
- * comitam, Escape descarta. Espelha o `metaDraft.title` da mesma forma que
- * o campo "Título no canvas" no corpo do form — os dois ficam em sync.
- */
+/** Título do card: duplo-clique → input; Enter ou blur comitam, Escape descarta. */
 function EditableTitle({
   value,
   fallback,
@@ -356,35 +360,91 @@ function EditableTitle({
   );
 }
 
-function MetaFields({ meta, onChange }: { meta: NodeMeta; onChange: (next: NodeMeta) => void }) {
+/** Descrição do card no header: duplo-clique → input; Enter ou blur comitam, Escape descarta. */
+function EditableDescription({
+  value,
+  placeholder,
+  onChange,
+}: {
+  value: string;
+  placeholder: string;
+  onChange: (next: string) => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [buffer, setBuffer] = useState(value);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) {
+      setBuffer(value);
+      requestAnimationFrame(() => {
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      });
+    }
+  }, [editing, value]);
+
+  function commit() {
+    onChange(buffer.trim());
+    setEditing(false);
+  }
+
+  function cancel() {
+    setEditing(false);
+  }
+
+  const lineClass =
+    "block h-5 w-full min-w-0 truncate px-1 text-xs leading-5 -mx-1 rounded hover:bg-muted/60";
+
+  if (editing) {
+    return (
+      <input
+        ref={inputRef}
+        type="text"
+        value={buffer}
+        onChange={(e) => setBuffer(e.target.value)}
+        onBlur={commit}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            commit();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            cancel();
+          }
+        }}
+        maxLength={280}
+        placeholder={placeholder}
+        aria-label="Descrição do nó no canvas"
+        className={cn(
+          lineClass,
+          "cursor-text border-b border-primary bg-transparent text-muted-foreground outline-none hover:bg-transparent",
+        )}
+      />
+    );
+  }
+
+  const displayed = value.trim();
   return (
-    <div className="mb-4 flex flex-col gap-3 border-b border-dashed border-border px-3 pb-4">
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="__node-title" className="text-xs font-medium">
-          Título no canvas
-        </Label>
-        <Input
-          id="__node-title"
-          value={meta.title ?? ""}
-          placeholder="(usa o padrão do tipo)"
-          onChange={(e) => onChange({ ...meta, title: e.target.value })}
-          className="h-9"
-        />
-      </div>
-      <div className="flex flex-col gap-1.5">
-        <Label htmlFor="__node-desc" className="text-xs font-medium">
-          Descrição no canvas
-        </Label>
-        <Textarea
-          id="__node-desc"
-          value={meta.description ?? ""}
-          rows={2}
-          placeholder="Linha curta exibida no card."
-          onChange={(e) => onChange({ ...meta, description: e.target.value })}
-          className="text-sm"
-        />
-      </div>
-    </div>
+    <span
+      role="button"
+      tabIndex={0}
+      onDoubleClick={() => setEditing(true)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setEditing(true);
+        }
+      }}
+      title="Duplo-clique para editar a descrição"
+      className={cn(
+        lineClass,
+        "cursor-text",
+        displayed ? "text-muted-foreground" : "text-muted-foreground/60 italic",
+      )}
+    >
+      {displayed || placeholder}
+    </span>
   );
 }
 

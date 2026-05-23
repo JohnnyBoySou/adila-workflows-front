@@ -351,6 +351,14 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
   },
 ];
 
+/**
+ * Mapa de nodeType → ícone e cor específicos do node.
+ * Usado pelo canvas para renderizar o ícone correto em vez do ícone genérico do variant.
+ */
+export const NODE_ICON_MAP: Record<string, { icon: LucideIcon; color: string }> = Object.fromEntries(
+  NODE_LIBRARY.filter((e) => e.nodeType).map((e) => [e.nodeType!, { icon: e.icon, color: e.color }]),
+);
+
 export const NODE_CATEGORIES: NodeCategory[] = [
   "Gatilhos",
   "Ações",

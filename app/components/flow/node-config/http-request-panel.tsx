@@ -11,20 +11,21 @@
  *   auth: { type, ...campos por tipo },
  *   timeoutMs, retry: { count, delayMs }, followRedirects, skipSslVerify, proxy
  */
+import { ClipboardPaste, Globe, KeyRound, ListChecks, Loader2, Settings2, ShieldCheck } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import {
-  ChevronDown,
-  ChevronUp,
-  Globe,
-  KeyRound,
-  ListChecks,
-  Settings2,
-  ShieldCheck,
-} from "lucide-react";
 
+import { Button } from "~/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "~/components/ui/dialog";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
-import { Textarea } from "~/components/ui/textarea";
+import { Sections, type SectionItem } from "~/components/ui/sections";
 import {
   Select,
   SelectContent,
@@ -32,11 +33,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
-import { Sections, type SectionItem } from "~/components/ui/sections";
+import { Textarea } from "~/components/ui/textarea";
 import { cn } from "~/lib/utils";
 
-import type { CustomPanelProps } from "./types";
 import { KeyValueEditor } from "./fields";
+import { parseCurlCommand, type ParsedCurl, type ParsedCurlAuth } from "./parse-curl";
+import type { CustomPanelProps } from "./types";
 
 /* -------------------------------------------------------------------------- */
 /* Tipos do painel                                                             */
@@ -159,6 +161,19 @@ export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps
     onChange({ auth: next });
   }
 
+  function applyCurlImport(parsed: ParsedCurl) {
+    const patch: Record<string, unknown> = {
+      url: parsed.url,
+      method: parsed.method,
+      headers: Object.keys(parsed.headers).length > 0 ? parsed.headers : undefined,
+      queryParams: Object.keys(parsed.queryParams).length > 0 ? parsed.queryParams : undefined,
+    };
+    if (parsed.body) patch.body = parsed.body;
+    if (parsed.auth) patch.auth = mapParsedAuth(parsed.auth);
+    if (parsed.skipSslVerify) patch.skipSslVerify = true;
+    onChange(patch);
+  }
+
   // Body é desabilitado (mas ainda navegável) quando o método não envia body.
   // Marcamos com `disabled` pra opacidade + `disabledReason` pro tooltip.
   const sections = useMemo<SectionItem<SectionId>[]>(
@@ -172,7 +187,12 @@ export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps
   );
 
   return (
-    <Sections sections={sections} value={section} onValueChange={setSection} ariaLabel="Seções de configuração HTTP">
+    <Sections
+      sections={sections}
+      value={section}
+      onValueChange={setSection}
+      ariaLabel="Seções de configuração HTTP"
+    >
       {section === "request" && (
         <RequestSection
           url={url}
@@ -181,6 +201,7 @@ export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps
           onUrlChange={(v) => set("url", v)}
           onMethodChange={(v) => set("method", v)}
           onQueryParamsChange={(v) => set("queryParams", v)}
+          onImportCurl={applyCurlImport}
         />
       )}
       {section === "headers" && (
@@ -244,6 +265,7 @@ function RequestSection({
   onUrlChange,
   onMethodChange,
   onQueryParamsChange,
+  onImportCurl,
 }: {
   url: string;
   method: string;
@@ -251,10 +273,37 @@ function RequestSection({
   onUrlChange: (v: string) => void;
   onMethodChange: (v: string) => void;
   onQueryParamsChange: (v: unknown) => void;
+  onImportCurl: (parsed: ParsedCurl) => void;
 }) {
+  const [curlDialogOpen, setCurlDialogOpen] = useState(false);
+
   return (
     <div>
-      <SectionHeader title="Request" hint="Método, URL e query parameters." />
+      <div className="mb-3 flex items-start justify-between gap-2">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Request</h3>
+          <p className="text-xs text-muted-foreground">Método, URL e query parameters.</p>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="shrink-0"
+          onClick={() => setCurlDialogOpen(true)}
+        >
+          <ClipboardPaste className="size-4" />
+          Importar curl
+        </Button>
+      </div>
+
+      <CurlImportDialog
+        open={curlDialogOpen}
+        onOpenChange={setCurlDialogOpen}
+        onImport={(parsed) => {
+          onImportCurl(parsed);
+          setCurlDialogOpen(false);
+        }}
+      />
 
       <div className="mb-4 flex items-stretch gap-2">
         <Select value={method} onValueChange={onMethodChange}>
@@ -667,6 +716,90 @@ function safeStringify(v: unknown): string {
   }
 }
 
-// Re-export silencioso pra evitar lint de unused (ícones usados nas tabs futuras).
-void ChevronDown;
-void ChevronUp;
+function mapParsedAuth(auth: ParsedCurlAuth): AuthValue {
+  switch (auth.type) {
+    case "basic":
+      return { type: "basic", username: auth.username, password: auth.password };
+    case "bearer":
+      return { type: "bearer", token: auth.token };
+    case "api_key":
+      return {
+        type: "api_key",
+        apiKeyName: auth.apiKeyName,
+        apiKeyValue: auth.apiKeyValue,
+        apiKeyIn: auth.apiKeyIn,
+      };
+    default:
+      return { type: "none" };
+  }
+}
+
+function CurlImportDialog({
+  open,
+  onOpenChange,
+  onImport,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  onImport: (parsed: ParsedCurl) => void;
+}) {
+  const [raw, setRaw] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (open) {
+      setRaw("");
+      setError(null);
+      setLoading(false);
+    }
+  }, [open]);
+
+  function handleImport() {
+    setLoading(true);
+    setError(null);
+    const result = parseCurlCommand(raw);
+    setLoading(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    onImport(result.data);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={loading ? () => {} : onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Importar curl</DialogTitle>
+          <DialogDescription>
+            Cole um comando copiado do terminal, Postman ou do DevTools. Método, URL, headers, body e
+            autenticação básica/Bearer serão preenchidos automaticamente.
+          </DialogDescription>
+        </DialogHeader>
+        <Textarea
+          value={raw}
+          onChange={(e) => {
+            setRaw(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder={`curl -X POST 'https://api.exemplo.com/users' \\\n  -H 'Authorization: Bearer token' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"name":"Ada"}'`}
+          rows={12}
+          spellCheck={false}
+          className="font-mono text-xs"
+          disabled={loading}
+        />
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <DialogFooter>
+          <Button type="button" variant="outline" onClick={() => onOpenChange(false)} disabled={loading}>
+            Cancelar
+          </Button>
+          <Button type="button" onClick={handleImport} disabled={loading || raw.trim() === ""}>
+            {loading && <Loader2 className="size-4 animate-spin" />}
+            Importar
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
