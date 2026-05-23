@@ -16,6 +16,7 @@ import { ExecutionsView } from "~/components/flow/executions-view";
 import { Button } from "~/components/ui/button";
 import * as workflowsApi from "~/services/workflows";
 import * as runsApi from "~/services/runs";
+import * as workflowVersionsApi from "~/services/workflow-versions";
 import type { RunStatus } from "~/services/runs";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
@@ -43,6 +44,9 @@ export default function FlowRoute() {
   const [infoOpen, setInfoOpen] = useState(false);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
+  const [publishState, setPublishState] = useState<
+    "idle" | "publishing" | "published" | "already_existed"
+  >("idle");
 
   const queryClient = useQueryClient();
   const workflowQuery = useQuery({
@@ -174,6 +178,23 @@ export default function FlowRoute() {
     runMutation.mutate();
   }, [id, saveState, flushSave, runMutation]);
 
+  const handlePublish = useCallback(async () => {
+    if (!id || publishState === "publishing") return;
+    // Persiste o draft antes de publicar para garantir que o snapshot reflita
+    // o estado atual do canvas, não o último save automático.
+    if (saveState === "dirty") flushSave();
+    setPublishState("publishing");
+    try {
+      const { alreadyExisted } = await workflowVersionsApi.publish(id);
+      setPublishState(alreadyExisted ? "already_existed" : "published");
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflowVersions.list(id) });
+    } catch {
+      setPublishState("idle");
+    } finally {
+      setTimeout(() => setPublishState("idle"), 3000);
+    }
+  }, [id, publishState, saveState, flushSave, queryClient]);
+
   // Botão "play" dentro do node toolbar emite via window — escutamos aqui
   // pra disparar a execução sem acoplar o componente leaf à mutation.
   // (O backend ainda não suporta start-from-node, então hoje sempre roda o
@@ -248,7 +269,9 @@ export default function FlowRoute() {
           onConnectionsClick={() => setConnectionsOpen(true)}
           onSave={flushSave}
           onRun={handleRun}
+          onPublish={handlePublish}
           saveState={saveState}
+          publishState={publishState}
           lastSavedAt={lastSavedAt}
           hasActiveRun={hasActiveRun}
         />

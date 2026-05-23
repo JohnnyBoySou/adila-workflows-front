@@ -49,6 +49,12 @@ export const queryKeys = {
     detail: (id: string) => ["environments", "detail", id] as const,
     variables: (environmentId: string) => ["environments", "variables", environmentId] as const,
   },
+  workflowVersions: {
+    all: ["workflow-versions"] as const,
+    list: (workflowId: string) => ["workflow-versions", "list", workflowId] as const,
+    detail: (workflowId: string, versionId: string) =>
+      ["workflow-versions", "detail", workflowId, versionId] as const,
+  },
   organization: {
     all: ["organization"] as const,
     members: (organizationId: string) => ["organization", "members", organizationId] as const,

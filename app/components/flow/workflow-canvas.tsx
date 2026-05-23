@@ -28,6 +28,8 @@ import WorkflowNodeComponent from "./workflow-node";
 import StickyNoteNodeComponent, { type StickyNoteNode } from "./sticky-note-node";
 import ContainerNodeComponent, { type ContainerNode } from "./container-node";
 import { FlowToolbar } from "./flow-toolbar";
+import { FlowAlignBar } from "./flow-align-bar";
+import { FlowContextMenu } from "./flow-context-menu";
 import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
@@ -153,6 +155,47 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
     // não compensa; o save dedupa via debounce no parent.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [nodes, edges]);
+
+  // ── Histórico de undo/redo ──────────────────────────────────────────────
+  // Stack de snapshots {nodes, edges}. Pointer aponta para o estado atual.
+  // `isHistoryOp` evita que a restauração de um snapshot empurre um novo.
+  const historyStack = useRef<{ nodes: Node[]; edges: Edge[] }[]>([
+    { nodes: hydrated.nodes, edges: hydrated.edges },
+  ]);
+  const historyPointer = useRef(0);
+  const isHistoryOp = useRef(false);
+
+  useEffect(() => {
+    if (!hydratedAtRef.current) return;
+    if (isHistoryOp.current) return;
+    // Limita o stack em 100 snapshots e descarta futuros ao gravar novo estado.
+    const snap = { nodes, edges };
+    historyStack.current = historyStack.current.slice(0, historyPointer.current + 1);
+    historyStack.current.push(snap);
+    if (historyStack.current.length > 100) historyStack.current.shift();
+    historyPointer.current = historyStack.current.length - 1;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges]);
+
+  const undo = useCallback(() => {
+    if (historyPointer.current <= 0) return;
+    historyPointer.current -= 1;
+    const snap = historyStack.current[historyPointer.current];
+    isHistoryOp.current = true;
+    setNodes(snap.nodes);
+    setEdges(snap.edges);
+    requestAnimationFrame(() => { isHistoryOp.current = false; });
+  }, [setNodes, setEdges]);
+
+  const redo = useCallback(() => {
+    if (historyPointer.current >= historyStack.current.length - 1) return;
+    historyPointer.current += 1;
+    const snap = historyStack.current[historyPointer.current];
+    isHistoryOp.current = true;
+    setNodes(snap.nodes);
+    setEdges(snap.edges);
+    requestAnimationFrame(() => { isHistoryOp.current = false; });
+  }, [setNodes, setEdges]);
 
   // Toggles de UI vêm do Zustand — assinaturas finas evitam re-render do canvas
   // quando outros pedaços da toolbar mudam.
@@ -297,10 +340,12 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
     });
   }, [nodes, edges, setNodes, setEdges, fitView]);
 
-  useFlowShortcuts({
+  const shortcuts = useFlowShortcuts({
     onAddSticky: handleAddSticky,
     onAddContainer: handleAddContainer,
     onAutoLayout: handleAutoLayout,
+    onUndo: undo,
+    onRedo: redo,
   });
 
   // ── Dialog de configuração do nó (double-click) ────────────────────────
@@ -430,61 +475,74 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
           animated={edgeStyle.animated}
         />
       )}
-      <ReactFlow
-        nodes={nodes}
-        edges={styledEdges}
-        nodeTypes={nodeTypes}
-        defaultEdgeOptions={defaultEdgeOptions}
-        connectionLineType={edgeStyle.type}
-        connectionLineStyle={{ stroke: edgeStyle.color, strokeWidth: edgeStyle.thickness }}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        onConnect={onConnect}
-        onNodeClick={handleNodeClick}
-        onNodeDoubleClick={handleNodeDoubleClick}
-        fitView
-        proOptions={{ hideAttribution: true }}
-        className="bg-background"
-        panOnDrag={isPanMode ? true : [1, 2]}
-        selectionOnDrag={!isPanMode && !locked}
-        nodesDraggable={!locked}
-        nodesConnectable={!locked}
-        elementsSelectable={!locked}
+      <FlowContextMenu
+        onAddSticky={handleAddSticky}
+        onAddContainer={handleAddContainer}
+        onDuplicate={shortcuts.duplicate}
+        onCopy={shortcuts.copy}
+        onCut={shortcuts.cut}
+        onPaste={shortcuts.paste}
+        onDelete={shortcuts.deleteSelected}
+        onSelectAll={shortcuts.selectAll}
+        onAutoLayout={handleAutoLayout}
       >
-        <Background variant={backgroundVariant} gap={16} size={1} />
-        {miniMapVisible && (
-          <MiniMap
-            pannable
-            zoomable
-            className="!rounded-lg !border !border-border !bg-card !ring-1 !ring-foreground/5"
-          />
-        )}
-        <Panel position="bottom-center" className="!bottom-6">
-          <FlowToolbar
-            onAddSticky={handleAddSticky}
-            onAddContainer={handleAddContainer}
-            onAutoLayout={handleAutoLayout}
-          />
-        </Panel>
-        {nodes.length === 0 && (
-          <Panel position="top-center" className="!top-24">
-            <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
-              <p className="text-sm font-medium">Canvas vazio</p>
-              <p className="max-w-xs text-xs text-muted-foreground">
-                Adicione um nó para começar. Comece pelo <strong>Início</strong> na biblioteca.
-              </p>
-              <Button size="sm" onClick={() => setLibraryOpen(true)}>
-                Abrir biblioteca
-              </Button>
-            </div>
+        <ReactFlow
+          nodes={nodes}
+          edges={styledEdges}
+          nodeTypes={nodeTypes}
+          defaultEdgeOptions={defaultEdgeOptions}
+          connectionLineType={edgeStyle.type}
+          connectionLineStyle={{ stroke: edgeStyle.color, strokeWidth: edgeStyle.thickness }}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          onConnect={onConnect}
+          onNodeClick={handleNodeClick}
+          onNodeDoubleClick={handleNodeDoubleClick}
+          fitView
+          proOptions={{ hideAttribution: true }}
+          className="bg-background"
+          panOnDrag={isPanMode ? true : [1, 2]}
+          selectionOnDrag={!isPanMode && !locked}
+          nodesDraggable={!locked}
+          nodesConnectable={!locked}
+          elementsSelectable={!locked}
+        >
+          <Background variant={backgroundVariant} gap={16} size={1} />
+          {miniMapVisible && (
+            <MiniMap
+              pannable
+              zoomable
+              className="!rounded-lg !border !border-border !bg-card !ring-1 !ring-foreground/5"
+            />
+          )}
+          <FlowAlignBar />
+          <Panel position="bottom-center" className="!bottom-6">
+            <FlowToolbar
+              onAddSticky={handleAddSticky}
+              onAddContainer={handleAddContainer}
+              onAutoLayout={handleAutoLayout}
+            />
           </Panel>
-        )}
-        <NodeLibraryDrawer
-          open={libraryOpen}
-          onOpenChange={setLibraryOpen}
-          onSelect={handleAddFromLibrary}
-        />
-      </ReactFlow>
+          {nodes.length === 0 && (
+            <Panel position="top-center" className="!top-24">
+              <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
+                <p className="text-sm font-medium">Canvas vazio</p>
+                <p className="max-w-xs text-xs text-muted-foreground">
+                  Adicione um nó para começar. Comece pelo <strong>Início</strong> na biblioteca.
+                </p>
+                <Button size="sm" onClick={() => setLibraryOpen(true)}>
+                  Abrir biblioteca
+                </Button>
+              </div>
+            </Panel>
+          )}
+          <NodeLibraryDrawer
+            open={libraryOpen}
+            onOpenChange={setLibraryOpen}
+            onSelect={handleAddFromLibrary}
+          />
+        </ReactFlow>
+      </FlowContextMenu>
       <CanvasHandleBridge nodesRef={nodesRef} edgesRef={edgesRef} />
       <NodeConfigDialog
         open={configState !== null}

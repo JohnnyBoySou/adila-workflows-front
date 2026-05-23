@@ -9,6 +9,7 @@ import {
   PenLine,
   Play,
   Save,
+  Tag,
 } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -34,7 +35,9 @@ type FlowTopBarProps = {
   onConnectionsClick?: () => void;
   onSave?: () => void;
   onRun?: () => void;
+  onPublish?: () => void;
   saveState?: SaveState;
+  publishState?: "idle" | "publishing" | "published" | "already_existed";
   /** Timestamp do último save bem-sucedido (ms). */
   lastSavedAt?: number | null;
   /** Mostra um indicador pulsante na aba "Execuções" quando há run em curso. */
@@ -59,7 +62,9 @@ export function FlowTopBar({
   onConnectionsClick,
   onSave,
   onRun,
+  onPublish,
   saveState = "idle",
+  publishState = "idle",
   lastSavedAt,
   hasActiveRun = false,
 }: FlowTopBarProps) {
@@ -176,6 +181,40 @@ export function FlowTopBar({
             </TooltipContent>
           </Tooltip>
         </TooltipProvider>
+
+        {onPublish && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="rounded-full"
+                  onClick={onPublish}
+                  aria-label="Publicar versão"
+                  disabled={publishState === "publishing"}
+                >
+                  {publishState === "publishing" ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : publishState === "published" || publishState === "already_existed" ? (
+                    <Check className="size-4" />
+                  ) : (
+                    <Tag className="size-4" />
+                  )}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {publishState === "publishing"
+                  ? "Publicando…"
+                  : publishState === "published"
+                    ? "Versão publicada"
+                    : publishState === "already_existed"
+                      ? "Já na versão mais recente"
+                      : "Publicar versão"}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
 
         <Button
           size="icon-sm"
