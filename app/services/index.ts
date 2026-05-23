@@ -29,8 +29,18 @@ import {
  *   VITE_API_URL=https://api.exemplo.com
  *
  * Em dev sem env definida, cai em `/api` (útil pra proxy do Vite).
+ * Em produção, ausência da env quase sempre é bug de build (variável não
+ * propagada como build arg) — registramos um warning visível no console.
  */
-export const API_BASE_URL: string = (import.meta.env.VITE_API_URL as string | undefined) ?? "/api";
+const RAW_API_URL = import.meta.env.VITE_API_URL as string | undefined;
+if (!RAW_API_URL && import.meta.env.PROD && typeof window !== "undefined") {
+  // eslint-disable-next-line no-console
+  console.warn(
+    "[services] VITE_API_URL ausente no build — usando fallback '/api'. " +
+      "Defina a variável como build arg no Docker/CI.",
+  );
+}
+export const API_BASE_URL: string = RAW_API_URL ?? "/api";
 
 /* -------------------------------------------------------------------------- */
 /* Auth token (in-memory + localStorage no client)                             */

@@ -11,6 +11,7 @@ import {
   Pause,
   Play,
   Plus,
+  Upload,
 } from "lucide-react";
 
 import type { Route } from "./+types/dashboard.workflows";
@@ -22,6 +23,7 @@ import type { WorkflowStatus, WorkflowSummary } from "~/services/workflows";
 import { queryKeys } from "~/lib/query-keys";
 
 import { FolderCreateDialog } from "~/components/folder-create-dialog";
+import { N8nImportDialog } from "~/components/n8n-import-dialog";
 import { WorkflowCreateDialog } from "~/components/workflow-create-dialog";
 import { WorkflowRenameDialog } from "~/components/workflow-rename-dialog";
 import { WorkflowMoveDialog } from "~/components/workflow-move-dialog";
@@ -159,6 +161,7 @@ export default function WorkflowsListRoute() {
 
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
+  const [importDialogOpen, setImportDialogOpen] = useState(false);
 
   const foldersQuery = useQuery({
     queryKey: queryKeys.folders.list(folderId),
@@ -258,6 +261,10 @@ export default function WorkflowsListRoute() {
             <FolderPlus className="size-4" />
             Nova pasta
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setImportDialogOpen(true)}>
+            <Upload className="size-4" />
+            Importar do n8n
+          </Button>
           <Button size="sm" onClick={() => setWorkflowDialogOpen(true)}>
             <Plus className="size-4" />
             Novo workflow
@@ -345,6 +352,12 @@ export default function WorkflowsListRoute() {
           // Após criar, abre o studio do workflow recém-criado.
           navigate(`/flow/${wf.id}`);
         }}
+      />
+      <N8nImportDialog
+        open={importDialogOpen}
+        onOpenChange={setImportDialogOpen}
+        folderId={folderId}
+        onImported={(wf) => navigate(`/flow/${wf.id}`)}
       />
     </div>
   );

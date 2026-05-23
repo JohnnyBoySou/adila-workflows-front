@@ -22,8 +22,10 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 # Vite inlinea variáveis VITE_* no bundle no momento do build — então elas
 # precisam estar presentes aqui, não apenas em runtime. Quem orquestra o
-# deploy (Railway/Railpack/CI) deve passar `--build-arg VITE_AUTH_URL=...`.
+# deploy (Railway/Railpack/CI) deve passar `--build-arg VITE_<NOME>=...`.
+ARG VITE_API_URL
 ARG VITE_AUTH_URL
+ENV VITE_API_URL=$VITE_API_URL
 ENV VITE_AUTH_URL=$VITE_AUTH_URL
 RUN npm run build
 

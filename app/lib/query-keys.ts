@@ -20,4 +20,12 @@ export const queryKeys = {
       ["workflows", "list", folderId ?? "root", page] as const,
     detail: (id: string) => ["workflows", "detail", id] as const,
   },
+  runs: {
+    all: ["runs"] as const,
+    list: (workflowId: string) => ["runs", "list", workflowId] as const,
+    detail: (workflowId: string, runId: string) =>
+      ["runs", "detail", workflowId, runId] as const,
+    steps: (workflowId: string, runId: string) =>
+      ["runs", "steps", workflowId, runId] as const,
+  },
 } as const;
