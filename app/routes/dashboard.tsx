@@ -1,3 +1,4 @@
+import { createContext, useContext, useState } from "react";
 import { Outlet, useMatches } from "react-router";
 
 import { AppShell, type Crumb } from "~/components/sidebar/app-shell";
@@ -27,12 +28,27 @@ function isDashboardHandle(h: unknown): h is DashboardHandle {
   );
 }
 
+/**
+ * Contexto que rotas filhas usam para empurrar crumbs dinâmicos ao header.
+ * Útil quando os crumbs dependem de dados assíncronos (ex: trail de pastas
+ * em Workflows). As crumbs são inseridas depois das estáticas do `handle`.
+ *
+ * Uso na rota filha:
+ *   const setDynamicCrumbs = useDynamicCrumbs();
+ *   useEffect(() => {
+ *     setDynamicCrumbs([{ label: "Pasta", to: "..." }]);
+ *     return () => setDynamicCrumbs([]);
+ *   }, [trail]);
+ */
+const DynamicCrumbsContext = createContext<(crumbs: Crumb[]) => void>(() => {});
+export function useDynamicCrumbs() {
+  return useContext(DynamicCrumbsContext);
+}
+
 export default function DashboardLayout() {
   const matches = useMatches();
+  const [dynamicCrumbs, setDynamicCrumbs] = useState<Crumb[]>([]);
 
-  // Monta a cadeia de crumbs percorrendo todos os matches que expõem `handle`
-  // do tipo `DashboardHandle`. Cada match contribui com seu pathname como
-  // href, ficando linkável até a página atual (que vira a folha não-link).
   const handleMatches = matches.filter((m) => isDashboardHandle(m.handle));
   const leaf = handleMatches.at(-1);
   const leafHandle = leaf?.handle as DashboardHandle | undefined;
@@ -44,18 +60,19 @@ export default function DashboardLayout() {
       to: m.pathname,
     })),
     ...(leafHandle?.parent ?? []),
+    ...dynamicCrumbs,
     ...(leafHandle ? [{ label: leafHandle.title }] : []),
   ];
 
-  // Evita duplicar "Dashboard" quando a própria rota raiz do dashboard
-  // declara esse título (dashboard.index).
   const deduped = crumbs.filter(
     (c, i, arr) => i === 0 || c.label !== arr[i - 1].label || c.to !== arr[i - 1].to,
   );
 
   return (
-    <AppShell title={leafHandle?.title ?? "Dashboard"} crumbs={deduped}>
-      <Outlet />
-    </AppShell>
+    <DynamicCrumbsContext value={setDynamicCrumbs}>
+      <AppShell title={leafHandle?.title ?? "Dashboard"} crumbs={deduped}>
+        <Outlet />
+      </AppShell>
+    </DynamicCrumbsContext>
   );
 }

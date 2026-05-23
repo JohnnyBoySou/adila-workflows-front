@@ -12,9 +12,6 @@ import {
 import { useState } from "react";
 import { Link } from "react-router";
 
-import type { DashboardHandle } from "~/routes/dashboard";
-import * as environmentsApi from "~/services/environments";
-import type { Environment, EnvironmentKind } from "~/services/environments";
 import { Badge } from "~/components/ui/badge";
 import { Button } from "~/components/ui/button";
 import {
@@ -40,6 +37,9 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { queryKeys } from "~/lib/query-keys";
+import type { DashboardHandle } from "~/routes/dashboard";
+import type { Environment, EnvironmentKind } from "~/services/environments";
+import * as environmentsApi from "~/services/environments";
 
 export const handle: DashboardHandle = { title: "Ambientes" };
 
@@ -244,7 +244,7 @@ export default function EnvironmentsRoute() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-xl font-semibold">Ambientes</h1>
+          <h1 className="text-2xl font-semibold">Ambientes</h1>
           <p className="text-sm text-muted-foreground">
             Gerencie ambientes e suas variáveis de configuração.
           </p>

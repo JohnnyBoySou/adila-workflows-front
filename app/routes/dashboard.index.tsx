@@ -1,4 +1,5 @@
 import { useMemo } from "react";
+import { useSession } from "~/lib/auth-client";
 import { Link } from "react-router";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import {
@@ -14,17 +15,15 @@ import {
   YAxis,
 } from "recharts";
 import {
-  ArrowUpRight,
+  AlertTriangle,
   CheckCircle2,
   Clock,
-  Plus,
   PlayCircle,
   Workflow,
 } from "lucide-react";
 
 import type { Route } from "./+types/dashboard.index";
 import type { DashboardHandle } from "./dashboard";
-import { Button } from "~/components/ui/button";
 import {
   Card,
   CardContent,
@@ -44,7 +43,6 @@ import { queryKeys } from "~/lib/query-keys";
 import * as workflowsApi from "~/services/workflows";
 import * as runsApi from "~/services/runs";
 import type { RunStatus, WorkflowRun } from "~/services/runs";
-import type { WorkflowSummary } from "~/services/workflows";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -239,14 +237,26 @@ function executionsToday(allRuns: WorkflowRun[]): number {
 /* Página                                                                      */
 /* -------------------------------------------------------------------------- */
 
+function greeting(name: string | undefined | null): string {
+  const hour = new Date().getHours();
+  const salutation =
+    hour >= 5 && hour < 12 ? "Bom dia" :
+    hour >= 12 && hour < 18 ? "Boa tarde" :
+    "Boa noite";
+  const first = name?.trim().split(/\s+/)[0] ?? "";
+  return first ? `${salutation}, ${first}` : salutation;
+}
+
 export default function DashboardRoute() {
+  const { data: session } = useSession();
   const workflowsQuery = useQuery({
     queryKey: queryKeys.workflows.list(null, 0),
     queryFn: () => workflowsApi.list({ limit: 100, offset: 0 }),
   });
 
   const workflows = workflowsQuery.data?.items ?? [];
-  const topWorkflows = workflows.slice(0, TOP_WORKFLOWS);
+  const activeWorkflows = workflows.filter((w) => w.status === "active");
+  const topWorkflows = activeWorkflows.slice(0, TOP_WORKFLOWS);
 
   // Uma query de runs por workflow do "top". useQueries permite paralelizar.
   const runsQueries = useQueries({
@@ -317,24 +327,23 @@ export default function DashboardRoute() {
     return { workflow: w, buckets, uptime: uptimeOf(buckets) };
   });
 
-  const recent = [...workflows]
-    .sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
-    .slice(0, 4);
+  // Últimas falhas — une todos os runs, filtra failed/cancelled, pega os 6 mais recentes.
+  const recentFailures = useMemo(() => {
+    const workflowById = new Map(workflows.map((w) => [w.id, w]));
+    return allRuns
+      .filter((r) => r.status === "failed" || r.status === "cancelled")
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+      .slice(0, 6)
+      .map((r) => ({ run: r, workflow: workflowById.get(r.workflowId) }));
+  }, [allRuns, workflows]);
 
   return (
     <>
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight">Boa noite, Lai</h1>
-          <p className="text-sm text-muted-foreground">
-            Aqui está o resumo da sua operação hoje.
-          </p>
-        </div>
-        <Button asChild>
-          <Link to="/flow">
-            <Plus className="size-4" /> Novo workflow
-          </Link>
-        </Button>
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">{greeting(session?.user?.name)}</h1>
+        <p className="text-sm text-muted-foreground">
+          Aqui está o resumo da sua operação hoje.
+        </p>
       </div>
 
       {/* KPIs */}
@@ -422,45 +431,45 @@ export default function DashboardRoute() {
         </Card>
       </div>
 
-      {/* Saúde dos workflows */}
-      <Card>
-        <CardHeader className="flex-row items-center justify-between space-y-0">
-          <div>
-            <CardTitle>Saúde dos workflows</CardTitle>
-            <CardDescription>
-              Últimos {HEALTH_BUCKETS} minutos — cada barra representa 1 minuto.
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-3 text-xs text-muted-foreground">
-            <Legend color="bg-emerald-500" label="Operacional" />
-            <Legend color="bg-amber-400" label="Degradado" />
-            <Legend color="bg-rose-500" label="Falha" />
-            <Legend color="bg-muted" label="Sem dados" />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          {workflowsQuery.isPending ? (
-            <HealthSkeleton />
-          ) : workflowHealth.length === 0 ? (
-            <EmptyHint label="Nenhum workflow cadastrado." />
-          ) : (
-            workflowHealth.map((h) => (
-              <div key={h.workflow.id} className="space-y-1">
-                <div className="flex items-center justify-between text-sm">
-                  <Link
-                    to={`/flow/${h.workflow.id}`}
-                    className="truncate font-medium hover:underline"
-                  >
-                    {h.workflow.name}
-                  </Link>
-                  <span className="text-muted-foreground tabular-nums">{h.uptime}</span>
+      {/* Saúde dos workflows — só exibe se houver ao menos 1 workflow ativo */}
+      {(workflowsQuery.isPending || workflowHealth.length > 0) && (
+        <Card>
+          <CardHeader className="flex-row items-center justify-between space-y-0">
+            <div>
+              <CardTitle>Saúde dos workflows</CardTitle>
+              <CardDescription>
+                Últimos {HEALTH_BUCKETS} minutos — cada barra representa 1 minuto.
+              </CardDescription>
+            </div>
+            <div className="flex items-center gap-3 text-xs text-muted-foreground">
+              <Legend color="bg-emerald-500" label="Operacional" />
+              <Legend color="bg-amber-400" label="Degradado" />
+              <Legend color="bg-rose-500" label="Falha" />
+              <Legend color="bg-muted" label="Sem dados" />
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {workflowsQuery.isPending ? (
+              <HealthSkeleton />
+            ) : (
+              workflowHealth.map((h) => (
+                <div key={h.workflow.id} className="space-y-1">
+                  <div className="flex items-center justify-between text-sm">
+                    <Link
+                      to={`/flow/${h.workflow.id}`}
+                      className="truncate font-medium hover:underline"
+                    >
+                      {h.workflow.name}
+                    </Link>
+                    <span className="text-muted-foreground tabular-nums">{h.uptime}</span>
+                  </div>
+                  <StatusBars buckets={h.buckets} />
                 </div>
-                <StatusBars buckets={h.buckets} />
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
+              ))
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Latência + recentes */}
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
@@ -507,42 +516,45 @@ export default function DashboardRoute() {
         <Card>
           <CardHeader className="flex-row items-center justify-between space-y-0">
             <div>
-              <CardTitle>Workflows recentes</CardTitle>
-              <CardDescription>Atualizados por último.</CardDescription>
+              <CardTitle>Falhas recentes</CardTitle>
+              <CardDescription>Execuções com erro ou canceladas.</CardDescription>
             </div>
-            <Button variant="ghost" size="sm" asChild>
-              <Link to="/dashboard/workflows">
-                Ver todos <ArrowUpRight className="size-4" />
-              </Link>
-            </Button>
+            {recentFailures.length > 0 && (
+              <AlertTriangle className="size-4 text-amber-500" />
+            )}
           </CardHeader>
           <CardContent>
-            {workflowsQuery.isPending ? (
+            {isLoading ? (
               <RecentSkeleton />
-            ) : recent.length === 0 ? (
-              <EmptyHint label="Nenhum workflow ainda." />
+            ) : recentFailures.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-6 text-center text-sm text-muted-foreground">
+                <CheckCircle2 className="size-7 text-emerald-500" />
+                Nenhuma falha recente. Tudo operando bem.
+              </div>
             ) : (
               <ul className="divide-y">
-                {recent.map((w) => (
-                  <li
-                    key={w.id}
-                    className="flex items-center justify-between gap-2 py-3 text-sm"
-                  >
+                {recentFailures.map(({ run, workflow }) => (
+                  <li key={run.id} className="flex items-center justify-between gap-2 py-3 text-sm">
                     <Link
-                      to={`/flow/${w.id}`}
+                      to={`/flow/${run.workflowId}`}
                       className="flex min-w-0 items-center gap-3 hover:underline"
                     >
-                      <div className="grid size-8 shrink-0 place-items-center rounded-md border bg-muted">
-                        <Workflow className="size-4 text-muted-foreground" />
+                      <div className="grid size-8 shrink-0 place-items-center rounded-md border bg-rose-500/10">
+                        <Workflow className="size-4 text-rose-500" />
                       </div>
                       <div className="min-w-0">
-                        <div className="truncate font-medium">{w.name}</div>
+                        <div className="truncate font-medium">
+                          {workflow?.name ?? "Workflow removido"}
+                        </div>
                         <div className="text-xs text-muted-foreground">
-                          {(runsByWorkflow.get(w.id) ?? []).length} execuções
+                          {new Date(run.createdAt).toLocaleString("pt-BR", {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
                         </div>
                       </div>
                     </Link>
-                    <StatusBadge status={w.status} />
+                    <RunStatusBadge status={run.status} />
                   </li>
                 ))}
               </ul>
@@ -567,16 +579,18 @@ function Legend({ color, label }: { color: string; label: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: WorkflowSummary["status"] }) {
-  const meta: Record<WorkflowSummary["status"], { label: string; cn: string }> = {
-    active: { label: "Ativo", cn: "border-transparent bg-primary/10 text-foreground" },
-    paused: { label: "Pausado", cn: "text-muted-foreground" },
-    draft: { label: "Rascunho", cn: "text-muted-foreground" },
-    archived: { label: "Arquivado", cn: "text-muted-foreground" },
+function RunStatusBadge({ status }: { status: RunStatus }) {
+  const meta: Record<RunStatus, { label: string; cn: string }> = {
+    queued:    { label: "Na fila",    cn: "text-muted-foreground" },
+    running:   { label: "Rodando",   cn: "border-transparent bg-sky-500/10 text-sky-600" },
+    success:   { label: "Sucesso",   cn: "border-transparent bg-emerald-500/10 text-emerald-600" },
+    failed:    { label: "Falhou",    cn: "border-transparent bg-rose-500/10 text-rose-600" },
+    cancelled: { label: "Cancelado", cn: "text-muted-foreground" },
   };
   const m = meta[status];
   return <span className={`rounded-md border px-2 py-0.5 text-xs ${m.cn}`}>{m.label}</span>;
 }
+
 
 function HealthSkeleton() {
   return (

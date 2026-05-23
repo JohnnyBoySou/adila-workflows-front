@@ -15,7 +15,7 @@ import {
   X
 } from "lucide-react";
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
+import { useNavigate, useSearchParams } from "react-router";
 
 import { queryKeys } from "~/lib/query-keys";
 import type { Folder } from "~/services/folders";
@@ -24,20 +24,13 @@ import type { WorkflowStatus, WorkflowSummary } from "~/services/workflows";
 import * as workflowsApi from "~/services/workflows";
 import type { Route } from "./+types/dashboard.workflows";
 import type { DashboardHandle } from "./dashboard";
+import { useDynamicCrumbs } from "./dashboard";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
 import { FolderCreateDialog } from "~/components/folder/folder-create-dialog";
 import { FolderIcon } from "~/components/folder/folder-icon";
 import { N8nImportDialog } from "~/components/n8n/n8n-import-dialog";
 import { Badge } from "~/components/ui/badge";
-import {
-  Breadcrumb,
-  BreadcrumbItem,
-  BreadcrumbLink,
-  BreadcrumbList,
-  BreadcrumbPage,
-  BreadcrumbSeparator,
-} from "~/components/ui/breadcrumb";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
 import {
@@ -187,6 +180,9 @@ export default function WorkflowsListRoute() {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
+
+  const moveWorkflow = useMoveWorkflow();
 
   // Input controlado localmente pra digitação fluida; sincronizamos com a URL
   // após um pequeno debounce. Quando a URL muda por outro motivo (clique no
@@ -229,6 +225,14 @@ export default function WorkflowsListRoute() {
   });
 
   const breadcrumbTrail = useFolderPath(folderId);
+  const setDynamicCrumbs = useDynamicCrumbs();
+
+  useEffect(() => {
+    setDynamicCrumbs(
+      breadcrumbTrail.map((f) => ({ label: f.name, to: `/dashboard/workflows?folder=${f.id}` })),
+    );
+    return () => setDynamicCrumbs([]);
+  }, [breadcrumbTrail, setDynamicCrumbs]);
 
   const foldersData = foldersQuery.data ?? [];
   const workflowsData = workflowsQuery.data?.items ?? [];
@@ -276,38 +280,12 @@ export default function WorkflowsListRoute() {
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
+        <div className="space-y-0.5">
           <h1 className="text-2xl font-semibold tracking-tight">Workflows</h1>
-          <Breadcrumb>
-            <BreadcrumbList>
-              <BreadcrumbItem>
-                {breadcrumbTrail.length === 0 ? (
-                  <BreadcrumbPage>Todos</BreadcrumbPage>
-                ) : (
-                  <BreadcrumbLink asChild>
-                    <Link to="/dashboard/workflows">Todos</Link>
-                  </BreadcrumbLink>
-                )}
-              </BreadcrumbItem>
-              {breadcrumbTrail.map((f, i) => {
-                const isLast = i === breadcrumbTrail.length - 1;
-                return (
-                  <BreadcrumbItem key={f.id}>
-                    <BreadcrumbSeparator />
-                    {isLast ? (
-                      <BreadcrumbPage>{f.name}</BreadcrumbPage>
-                    ) : (
-                      <BreadcrumbLink asChild>
-                        <Link to={`/dashboard/workflows?folder=${f.id}`}>{f.name}</Link>
-                      </BreadcrumbLink>
-                    )}
-                  </BreadcrumbItem>
-                );
-              })}
-            </BreadcrumbList>
-          </Breadcrumb>
+          <p className="text-sm text-muted-foreground">
+            Liste, organize e abra workflows no studio.
+          </p>
         </div>
-
         <div className="flex items-center gap-2">
           <ViewToggle value={view} onChange={(v) => setParam("view", v === "grid" ? null : v)} />
           <CreateActionsMenu
@@ -358,12 +336,26 @@ export default function WorkflowsListRoute() {
             />
           ) : (
             <>
-              {foldersData.length > 0 && (
+              {(foldersData.length > 0 || (isDragging && folderId !== null)) && (
                 <section className="space-y-3">
                   <SectionTitle>Pastas</SectionTitle>
                   <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6">
+                    {isDragging && folderId !== null && (
+                      <DropToParentZone
+                        onDropWorkflow={(workflowId) =>
+                          moveWorkflow.mutate({ id: workflowId, folderId: null })
+                        }
+                      />
+                    )}
                     {foldersData.map((f) => (
-                      <FolderCard key={f.id} folder={f} onOpen={() => enterFolder(f.id)} />
+                      <FolderCard
+                        key={f.id}
+                        folder={f}
+                        onOpen={() => enterFolder(f.id)}
+                        onDropWorkflow={(workflowId) =>
+                          moveWorkflow.mutate({ id: workflowId, folderId: f.id })
+                        }
+                      />
                     ))}
                   </div>
                 </section>
@@ -374,7 +366,13 @@ export default function WorkflowsListRoute() {
                   <SectionTitle>Workflows</SectionTitle>
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
                     {workflowsData.map((w) => (
-                      <WorkflowCard key={w.id} workflow={w} onOpen={() => openWorkflow(w.id)} />
+                      <WorkflowCard
+                        key={w.id}
+                        workflow={w}
+                        onOpen={() => openWorkflow(w.id)}
+                        onDragStart={() => setIsDragging(true)}
+                        onDragEnd={() => setIsDragging(false)}
+                      />
                     ))}
                   </div>
                 </section>
@@ -713,10 +711,38 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
   );
 }
 
-function FolderCard({ folder, onOpen }: { folder: Folder; onOpen: () => void }) {
+function FolderCard({
+  folder,
+  onOpen,
+  onDropWorkflow,
+}: {
+  folder: Folder;
+  onOpen: () => void;
+  onDropWorkflow?: (workflowId: string) => void;
+}) {
   const actions = useFolderActions(folder);
+  const [isDragOver, setIsDragOver] = useState(false);
   return (
-    <div className="group relative">
+    <div
+      className={cn(
+        "group relative rounded-md transition-colors",
+        isDragOver && "ring-2 ring-primary bg-primary/10",
+      )}
+      onDragOver={(e) => {
+        if (!onDropWorkflow) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        if (!onDropWorkflow) return;
+        e.preventDefault();
+        const workflowId = e.dataTransfer.getData("workflow-id");
+        if (workflowId) onDropWorkflow(workflowId);
+        setIsDragOver(false);
+      }}
+    >
       <button
         type="button"
         onClick={onOpen}
@@ -787,6 +813,21 @@ function FolderDeleteDialog({
 }
 
 /**
+ * Move um workflow para uma pasta (ou para a raiz, folderId = null).
+ * Invalida a lista completa de workflows após o sucesso.
+ */
+function useMoveWorkflow() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, folderId }: { id: string; folderId: string | null }) =>
+      workflowsApi.update(id, { folderId }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+    },
+  });
+}
+
+/**
  * Mutations e estado de dialogs por workflow — compartilhado entre o card
  * e a linha da tabela. Mantém a UI fina: cada consumidor renderiza só os
  * triggers, esse hook cuida de duplicar/togglar status/excluir + dialogs
@@ -848,9 +889,20 @@ function useWorkflowActions(workflow: WorkflowSummary) {
   };
 }
 
-function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen: () => void }) {
+function WorkflowCard({
+  workflow,
+  onOpen,
+  onDragStart,
+  onDragEnd,
+}: {
+  workflow: WorkflowSummary;
+  onOpen: () => void;
+  onDragStart?: () => void;
+  onDragEnd?: () => void;
+}) {
   const meta = statusMeta[workflow.status];
   const actions = useWorkflowActions(workflow);
+  const [isDragging, setIsDragging] = useState(false);
   const {
     renameOpen,
     setRenameOpen,
@@ -864,7 +916,23 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
   } = actions;
 
   return (
-    <Card className="group relative gap-0 overflow-hidden p-0 transition-colors hover:bg-muted/40">
+    <Card
+      draggable
+      onDragStart={(e) => {
+        e.dataTransfer.setData("workflow-id", workflow.id);
+        e.dataTransfer.effectAllowed = "move";
+        setIsDragging(true);
+        onDragStart?.();
+      }}
+      onDragEnd={() => {
+        setIsDragging(false);
+        onDragEnd?.();
+      }}
+      className={cn(
+        "group relative gap-0 overflow-hidden p-0 transition-colors hover:bg-muted/40",
+        isDragging && "opacity-50",
+      )}
+    >
       <button
         type="button"
         onClick={onOpen}
@@ -945,6 +1013,39 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
   );
 }
 
+/**
+ * Card tracejado exibido no início da grade de pastas quando o usuário está
+ * arrastando um workflow dentro de uma subpasta. Soltar aqui move o workflow
+ * para a raiz (folderId = null), efetivamente retirando-o da pasta atual.
+ */
+function DropToParentZone({ onDropWorkflow }: { onDropWorkflow: (workflowId: string) => void }) {
+  const [isDragOver, setIsDragOver] = useState(false);
+  return (
+    <div
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setIsDragOver(true);
+      }}
+      onDragLeave={() => setIsDragOver(false)}
+      onDrop={(e) => {
+        e.preventDefault();
+        const workflowId = e.dataTransfer.getData("workflow-id");
+        if (workflowId) onDropWorkflow(workflowId);
+        setIsDragOver(false);
+      }}
+      className={cn(
+        "flex flex-col items-center justify-center gap-2 rounded-md border-2 border-dashed p-3 text-center transition-colors",
+        isDragOver
+          ? "border-primary bg-primary/10 text-primary"
+          : "border-muted-foreground/30 text-muted-foreground",
+      )}
+    >
+      <p className="text-xs font-medium leading-tight">Soltar aqui para tirar da pasta</p>
+    </div>
+  );
+}
+
 function FolderActionsMenu({ onDelete }: { onDelete: () => void }) {
   return (
     <DropdownMenu>
@@ -981,8 +1082,8 @@ function ViewToggle({
   onChange: (v: ViewMode) => void;
 }) {
   return (
-      <Tabs>
-        <TabsList >
+      <Tabs value={value}>
+        <TabsList>
           <TabsTrigger onClick={() => onChange("grid")} className="data-active:bg-muted" value="grid">
             <LayoutGrid className="size-4" />
           </TabsTrigger>
