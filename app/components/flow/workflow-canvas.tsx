@@ -156,6 +156,59 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
 
   useFlowShortcuts({ onAddSticky: handleAddSticky, onAddContainer: handleAddContainer });
 
+  // ── Dialog de configuração do nó (double-click) ────────────────────────
+  const [configState, setConfigState] = useState<{
+    nodeId: string;
+    nodeType: string;
+    nodeTitle?: string;
+    values: Record<string, unknown>;
+  } | null>(null);
+
+  const handleNodeDoubleClick = useCallback((_e: React.MouseEvent, node: Node) => {
+    // Nó executável (React Flow type = "workflow") → engine type vem de data.nodeType.
+    // Visuais (sticky/container) → mapeia pro tipo do engine equivalente.
+    let engineType: string | undefined;
+    let title: string | undefined;
+    if (node.type === "workflow") {
+      const d = (node.data ?? {}) as Record<string, unknown>;
+      engineType = typeof d.nodeType === "string" ? d.nodeType : undefined;
+      title = typeof d.title === "string" ? d.title : undefined;
+    } else if (node.type === "sticky") {
+      engineType = "sticky_note";
+    } else if (node.type === "container") {
+      engineType = "container";
+    }
+    if (!engineType) return;
+
+    const dataObj = (node.data ?? {}) as Record<string, unknown>;
+    const values: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(dataObj)) {
+      if (EDITOR_META_KEYS.has(k)) continue;
+      values[k] = v;
+    }
+    setConfigState({ nodeId: node.id, nodeType: engineType, nodeTitle: title, values });
+  }, []);
+
+  const handleConfigSave = useCallback(
+    (next: Record<string, unknown>) => {
+      if (!configState) return;
+      const id = configState.nodeId;
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.id !== id) return n;
+          // Preserva campos meta de editor presentes em `data`.
+          const current = (n.data ?? {}) as Record<string, unknown>;
+          const meta: Record<string, unknown> = {};
+          for (const k of EDITOR_META_KEYS) {
+            if (k in current) meta[k] = current[k];
+          }
+          return { ...n, data: { ...meta, ...next } };
+        }),
+      );
+    },
+    [configState, setNodes],
+  );
+
   // ── Expose handle ──────────────────────────────────────────────────────
   // Lê estado vivo via closure no momento do save (não snapshotamos).
   const nodesRef = useRef(nodes);
@@ -172,6 +225,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
+        onNodeDoubleClick={handleNodeDoubleClick}
         fitView
         proOptions={{ hideAttribution: true }}
         className="bg-background"
@@ -212,6 +266,14 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         />
       </ReactFlow>
       <CanvasHandleBridge nodesRef={nodesRef} edgesRef={edgesRef} />
+      <NodeConfigDialog
+        open={configState !== null}
+        onOpenChange={(o) => !o && setConfigState(null)}
+        nodeType={configState?.nodeType}
+        nodeTitle={configState?.nodeTitle}
+        values={configState?.values ?? {}}
+        onSave={handleConfigSave}
+      />
     </>
   );
 }

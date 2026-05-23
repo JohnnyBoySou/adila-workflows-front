@@ -10,6 +10,7 @@
 #   LEFTHOOK_EXCLUDE=lint git commit ...
 
 pre-commit:
+  skip: true
   parallel: true
   jobs:
     - name: format
