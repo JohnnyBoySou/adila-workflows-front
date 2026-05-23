@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -14,53 +14,40 @@ import {
   type Node,
 } from "@xyflow/react";
 
-import WorkflowNodeComponent, { type WorkflowNode } from "./workflow-node";
+import WorkflowNodeComponent from "./workflow-node";
 import StickyNoteNodeComponent, { type StickyNoteNode } from "./sticky-note-node";
 import ContainerNodeComponent, { type ContainerNode } from "./container-node";
 import { FlowToolbar } from "./flow-toolbar";
 import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
+import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
+import { Button } from "~/components/ui/button";
 
-const initialNodes: WorkflowNode[] = [
-  {
-    id: "1",
-    type: "workflow",
-    position: { x: 0, y: 0 },
-    data: { title: "Início", description: "Gatilho do workflow", variant: "trigger" },
-  },
-  {
-    id: "2",
-    type: "workflow",
-    position: { x: -180, y: 160 },
-    data: { title: "Validar dados", description: "Checa o payload de entrada", variant: "action" },
-  },
-  {
-    id: "3",
-    type: "workflow",
-    position: { x: 180, y: 160 },
-    data: { title: "Enviar e-mail", description: "Notifica o lead", variant: "action" },
-  },
-  {
-    id: "4",
-    type: "workflow",
-    position: { x: 0, y: 320 },
-    data: { title: "Fim", description: "Workflow concluído", variant: "end" },
-  },
-];
+export type WorkflowCanvasHandle = {
+  /** Snapshot do canvas no shape persistido — chamado no save. */
+  getDefinition: () => PersistedDefinition;
+};
 
-const initialEdges: Edge[] = [
-  { id: "e1-2", source: "1", target: "2", animated: true },
-  { id: "e1-3", source: "1", target: "3", animated: true },
-  { id: "e2-4", source: "2", target: "4" },
-  { id: "e3-4", source: "3", target: "4" },
-];
+type WorkflowCanvasProps = {
+  /** Definition cru vindo do backend; ignorado depois da primeira hidratação. */
+  initialDefinition: unknown;
+  /** Disparado em qualquer mudança que altere o que será salvo. */
+  onDirtyChange?: () => void;
+};
 
-let nodeIdCounter = initialNodes.length + 1;
-const nextNodeId = () => String(nodeIdCounter++);
+// ── id generator ─────────────────────────────────────────────────────────
+// Garante unicidade entre canvases sem persistir contador. Usa crypto.randomUUID
+// quando disponível pra evitar choque com ids do backend (que também são UUIDs).
+function nextNodeId(): string {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+  return `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
 
-function Flow() {
+function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   const nodeTypes = useMemo(
     () => ({
       workflow: WorkflowNodeComponent,
@@ -69,8 +56,26 @@ function Flow() {
     }),
     [],
   );
-  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(initialNodes as Node[]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(initialEdges);
+
+  // Hidrata uma vez por definition recebida. Trocar de workflow remonta a rota
+  // (key={id} no parent), então não precisa re-hidratar in-place.
+  const hydrated = useMemo(() => hydrateDefinition(initialDefinition), [initialDefinition]);
+  const [nodes, setNodes, onNodesChange] = useNodesState<Node>(hydrated.nodes);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>(hydrated.edges);
+
+  // ── Dirty tracking ─────────────────────────────────────────────────────
+  // Hidratação inicial não conta como dirty; mudanças subsequentes contam.
+  const hydratedAtRef = useRef(false);
+  useEffect(() => {
+    hydratedAtRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!hydratedAtRef.current) return;
+    onDirtyChange?.();
+    // Disparado em toda mudança de nodes/edges — granularidade fina demais
+    // não compensa; o save dedupa via debounce no parent.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, edges]);
 
   // Toggles de UI vêm do Zustand — assinaturas finas evitam re-render do canvas
   // quando outros pedaços da toolbar mudam.
@@ -119,9 +124,7 @@ function Flow() {
       position: { x: pos.x - 200, y: pos.y - 140 },
       width: 400,
       height: 280,
-      // zIndex negativo deixa o frame atrás dos nós executáveis
       zIndex: -1,
-      // Não-conectável: container é puramente visual
       selectable: true,
       data: { label: "Grupo", color: "slate" },
     };
@@ -140,47 +143,101 @@ function Flow() {
 
   useFlowShortcuts({ onAddSticky: handleAddSticky, onAddContainer: handleAddContainer });
 
+  // ── Expose handle ──────────────────────────────────────────────────────
+  // Lê estado vivo via closure no momento do save (não snapshotamos).
+  const nodesRef = useRef(nodes);
+  const edgesRef = useRef(edges);
+  nodesRef.current = nodes;
+  edgesRef.current = edges;
+
   return (
-    <ReactFlow
-      nodes={nodes}
-      edges={edges}
-      nodeTypes={nodeTypes}
-      onNodesChange={onNodesChange}
-      onEdgesChange={onEdgesChange}
-      onConnect={onConnect}
-      fitView
-      proOptions={{ hideAttribution: true }}
-      className="bg-background"
-      panOnDrag={isPanMode ? true : [1, 2]}
-      selectionOnDrag={!isPanMode && !locked}
-      nodesDraggable={!locked}
-      nodesConnectable={!locked}
-      elementsSelectable={!locked}
-    >
-      <Background variant={backgroundVariant} gap={16} size={1} />
-      {miniMapVisible && (
-        <MiniMap
-          pannable
-          zoomable
-          className="!rounded-lg !border !border-border !bg-card !ring-1 !ring-foreground/5"
+    <>
+      <ReactFlow
+        nodes={nodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onConnect={onConnect}
+        fitView
+        proOptions={{ hideAttribution: true }}
+        className="bg-background"
+        panOnDrag={isPanMode ? true : [1, 2]}
+        selectionOnDrag={!isPanMode && !locked}
+        nodesDraggable={!locked}
+        nodesConnectable={!locked}
+        elementsSelectable={!locked}
+      >
+        <Background variant={backgroundVariant} gap={16} size={1} />
+        {miniMapVisible && (
+          <MiniMap
+            pannable
+            zoomable
+            className="!rounded-lg !border !border-border !bg-card !ring-1 !ring-foreground/5"
+          />
+        )}
+        <Panel position="bottom-center" className="!bottom-6">
+          <FlowToolbar onAddSticky={handleAddSticky} onAddContainer={handleAddContainer} />
+        </Panel>
+        {nodes.length === 0 && (
+          <Panel position="top-center" className="!top-24">
+            <div className="pointer-events-auto flex flex-col items-center gap-3 rounded-lg border border-dashed border-border bg-card/90 px-6 py-5 text-center shadow-sm backdrop-blur">
+              <p className="text-sm font-medium">Canvas vazio</p>
+              <p className="max-w-xs text-xs text-muted-foreground">
+                Adicione um nó para começar. Comece pelo <strong>Início</strong> na biblioteca.
+              </p>
+              <Button size="sm" onClick={() => setLibraryOpen(true)}>
+                Abrir biblioteca
+              </Button>
+            </div>
+          </Panel>
+        )}
+        <NodeLibraryDrawer
+          open={libraryOpen}
+          onOpenChange={setLibraryOpen}
+          onSelect={handleAddFromLibrary}
         />
-      )}
-      <Panel position="bottom-center" className="!bottom-6">
-        <FlowToolbar onAddSticky={handleAddSticky} onAddContainer={handleAddContainer} />
-      </Panel>
-      <NodeLibraryDrawer
-        open={libraryOpen}
-        onOpenChange={setLibraryOpen}
-        onSelect={handleAddFromLibrary}
-      />
-    </ReactFlow>
+      </ReactFlow>
+      <CanvasHandleBridge nodesRef={nodesRef} edgesRef={edgesRef} />
+    </>
   );
 }
 
-export function WorkflowCanvas() {
-  return (
-    <ReactFlowProvider>
-      <Flow />
-    </ReactFlowProvider>
-  );
+// Bridge interno: o forwardRef vive fora do ReactFlowProvider; usamos um
+// componente filho para "publicar" o handle via callback ref pra fora.
+const handleRefSlot: { current: WorkflowCanvasHandle | null } = { current: null };
+
+function CanvasHandleBridge({
+  nodesRef,
+  edgesRef,
+}: {
+  nodesRef: React.RefObject<Node[]>;
+  edgesRef: React.RefObject<Edge[]>;
+}) {
+  useEffect(() => {
+    handleRefSlot.current = {
+      getDefinition: () => serializeDefinition(nodesRef.current ?? [], edgesRef.current ?? []),
+    };
+    return () => {
+      handleRefSlot.current = null;
+    };
+  }, [nodesRef, edgesRef]);
+  return null;
 }
+
+export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasProps>(
+  function WorkflowCanvas(props, ref) {
+    useImperativeHandle(
+      ref,
+      () => ({
+        getDefinition: () => handleRefSlot.current?.getDefinition() ?? { nodes: [], edges: [] },
+      }),
+      [],
+    );
+    return (
+      <ReactFlowProvider>
+        <Flow {...props} />
+      </ReactFlowProvider>
+    );
+  },
+);

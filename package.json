@@ -5,7 +5,7 @@
   "scripts": {
     "build": "react-router build",
     "dev": "react-router dev",
-    "start": "react-router-serve ./build/server/index.js",
+    "start": "vite preview --host 0.0.0.0 --port 3000",
     "typecheck": "react-router typegen && tsc",
     "lint": "oxlint",
     "lint:fix": "oxlint --fix",
@@ -17,7 +17,6 @@
   "dependencies": {
     "@better-fetch/fetch": "^1.1.21",
     "@react-router/node": "7.15.1",
-    "@react-router/serve": "7.15.1",
     "@tanstack/react-query": "^5.100.13",
     "@xyflow/react": "^12.10.2",
     "better-auth": "^1.6.11",

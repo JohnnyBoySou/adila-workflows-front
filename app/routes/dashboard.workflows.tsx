@@ -174,9 +174,8 @@ export default function WorkflowsListRoute() {
     setParam("folder", id);
   }
 
-  function openWorkflow(_id: string) {
-    // Stub: studio único enquanto não temos rotas por id.
-    navigate("/flow");
+  function openWorkflow(id: string) {
+    navigate(`/flow/${id}`);
   }
 
   // Só travamos a UI no carregamento inicial; refetches em segundo plano
@@ -299,10 +298,9 @@ export default function WorkflowsListRoute() {
         open={workflowDialogOpen}
         onOpenChange={setWorkflowDialogOpen}
         folderId={folderId}
-        onCreated={() => {
-          // Após criar, vai direto pro studio. Quando houver rota por id,
-          // trocar pra `/flow/${wf.id}`.
-          navigate("/flow");
+        onCreated={(wf) => {
+          // Após criar, abre o studio do workflow recém-criado.
+          navigate(`/flow/${wf.id}`);
         }}
       />
     </div>

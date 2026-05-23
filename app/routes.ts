@@ -9,5 +9,5 @@ export default [
     route("settings", "routes/dashboard.settings.tsx"),
     route("profile", "routes/dashboard.profile.tsx"),
   ]),
-  route("flow", "routes/flow.tsx"),
+  route("flow/:id", "routes/flow.tsx"),
 ] satisfies RouteConfig;
