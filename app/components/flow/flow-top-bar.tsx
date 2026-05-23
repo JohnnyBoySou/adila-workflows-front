@@ -2,21 +2,27 @@ import { Link } from "react-router";
 import {
   Check,
   ChevronLeft,
+  Database,
   History,
   Info,
   Loader2,
   PenLine,
   Play,
   Save,
-  Webhook,
 } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
 import { Separator } from "~/components/ui/separator";
 import { Tabs, TabsList, TabsTrigger } from "~/components/ui/tabs";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-export type FlowTab = "editor" | "executions" | "triggers";
+export type FlowTab = "editor" | "executions";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -24,6 +30,8 @@ type FlowTopBarProps = {
   tab: FlowTab;
   onTabChange: (tab: FlowTab) => void;
   onInfoClick: () => void;
+  /** Abre o gerenciador de database connections do workflow. */
+  onConnectionsClick?: () => void;
   onSave?: () => void;
   onRun?: () => void;
   saveState?: SaveState;
@@ -48,6 +56,7 @@ export function FlowTopBar({
   tab,
   onTabChange,
   onInfoClick,
+  onConnectionsClick,
   onSave,
   onRun,
   saveState = "idle",
@@ -87,6 +96,19 @@ export function FlowTopBar({
           <Info className="size-4" />
         </Button>
 
+        {onConnectionsClick && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className="rounded-full"
+            onClick={onConnectionsClick}
+            aria-label="Database connections"
+            title="Database connections"
+          >
+            <Database className="size-4" />
+          </Button>
+        )}
+
         <Separator orientation="vertical" className="mx-1 h-5" />
 
         <Tabs value={tab} onValueChange={(v) => onTabChange(v as FlowTab)}>
@@ -116,53 +138,44 @@ export function FlowTopBar({
                 </span>
               )}
             </TabsTrigger>
-            <TabsTrigger
-              value="triggers"
-              className="size-7 rounded-full p-0"
-              aria-label="Triggers"
-              title="Triggers"
-            >
-              <Webhook className="size-4" />
-            </TabsTrigger>
           </TabsList>
         </Tabs>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          className={cn("relative rounded-full", dirty && "text-foreground")}
-          onClick={onSave}
-          aria-label="Salvar"
-          title={savedLabel ?? "Salvar"}
-          disabled={saving}
-        >
-          {saving ? (
-            <Loader2 className="size-4 animate-spin" />
-          ) : saveState === "saved" ? (
-            <Check className="size-4" />
-          ) : (
-            <Save className="size-4" />
-          )}
-          {dirty && (
-            <span
-              aria-hidden
-              className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500"
-            />
-          )}
-        </Button>
-
-        {savedLabel && (
-          <span
-            className={cn(
-              "px-2 text-[11px] tabular-nums whitespace-nowrap text-muted-foreground",
-              saveState === "error" && "text-destructive",
-            )}
-          >
-            {savedLabel}
-          </span>
-        )}
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="icon-sm"
+                className={cn("relative rounded-full", dirty && "text-foreground")}
+                onClick={onSave}
+                aria-label={savedLabel ?? "Salvar"}
+                disabled={saving}
+              >
+                {saving ? (
+                  <Loader2 className="size-4 animate-spin" />
+                ) : saveState === "saved" ? (
+                  <Check className="size-4" />
+                ) : (
+                  <Save className="size-4" />
+                )}
+                {dirty && (
+                  <span
+                    aria-hidden
+                    className="absolute right-1 top-1 size-1.5 rounded-full bg-amber-500"
+                  />
+                )}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent
+              className={cn(saveState === "error" && "bg-destructive text-destructive-foreground")}
+            >
+              {savedLabel ?? "Salvar"}
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
 
         <Button
           size="icon-sm"

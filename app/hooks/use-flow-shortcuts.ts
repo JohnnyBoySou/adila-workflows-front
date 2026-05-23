@@ -7,11 +7,12 @@ import { useFlowStore } from "~/stores/flow";
 type Options = {
   onAddSticky: () => void;
   onAddContainer: () => void;
+  onAutoLayout: () => void;
 };
 
 let dupCounter = 0;
 
-export function useFlowShortcuts({ onAddSticky, onAddContainer }: Options) {
+export function useFlowShortcuts({ onAddSticky, onAddContainer, onAutoLayout }: Options) {
   const { getNodes, getEdges, setNodes, setEdges, fitView, zoomTo, zoomIn, zoomOut } =
     useReactFlow();
 
@@ -73,6 +74,8 @@ export function useFlowShortcuts({ onAddSticky, onAddContainer }: Options) {
   useHotkeys("s", onAddSticky, { preventDefault: true });
   // F = "Frame" (Figma-style)
   useHotkeys("f", onAddContainer, { preventDefault: true });
+  // Shift+A = auto-organizar (paraleliza com Shift+1/2 que já são "view ops").
+  useHotkeys("shift+a", onAutoLayout, { preventDefault: true });
 
   // Selection / editing
   useHotkeys("mod+d", duplicateSelected, { preventDefault: true });

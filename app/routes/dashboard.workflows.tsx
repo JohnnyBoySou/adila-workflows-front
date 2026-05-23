@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -11,7 +11,9 @@ import {
   Pause,
   Play,
   Plus,
+  Search,
   Upload,
+  X,
 } from "lucide-react";
 
 import type { Route } from "./+types/dashboard.workflows";
@@ -22,6 +24,7 @@ import type { Folder } from "~/services/folders";
 import type { WorkflowStatus, WorkflowSummary } from "~/services/workflows";
 import { queryKeys } from "~/lib/query-keys";
 
+import { ConfirmDialog } from "~/components/confirm-dialog";
 import { FolderCreateDialog } from "~/components/folder-create-dialog";
 import { N8nImportDialog } from "~/components/n8n-import-dialog";
 import { WorkflowCreateDialog } from "~/components/workflow-create-dialog";
@@ -38,6 +41,14 @@ import {
 } from "~/components/ui/breadcrumb";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
+import { Input } from "~/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -68,6 +79,11 @@ import { cn } from "~/lib/utils";
 type ViewMode = "grid" | "table";
 function isViewMode(v: string | null): v is ViewMode {
   return v === "grid" || v === "table";
+}
+
+const STATUSES: WorkflowStatus[] = ["active", "paused", "draft", "archived"];
+function isWorkflowStatus(v: string | null): v is WorkflowStatus {
+  return v !== null && (STATUSES as string[]).includes(v);
 }
 
 export function meta({}: Route.MetaArgs) {
@@ -158,25 +174,54 @@ export default function WorkflowsListRoute() {
   const page = Math.max(1, Number(searchParams.get("page") ?? "1") || 1);
   const viewParam = searchParams.get("view");
   const view: ViewMode = isViewMode(viewParam) ? viewParam : "grid";
+  const statusParam = searchParams.get("status");
+  const status: WorkflowStatus | null = isWorkflowStatus(statusParam) ? statusParam : null;
+  const q = (searchParams.get("q") ?? "").trim();
+  // Pesquisa e filtro de status combinam mal com a navegação por pastas —
+  // quando algum está ativo, listamos workflows da org inteira (folderId
+  // omitido) e escondemos as pastas. Sem filtro, mantém o modo "explorar pasta".
+  const filtersActive = q.length > 0 || status !== null;
 
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
 
+  // Input controlado localmente pra digitação fluida; sincronizamos com a URL
+  // após um pequeno debounce. Quando a URL muda por outro motivo (clique no
+  // botão limpar, navegação back/forward), o effect abaixo realinha o input.
+  const [searchInput, setSearchInput] = useState(q);
+  useEffect(() => {
+    setSearchInput(q);
+  }, [q]);
+  useEffect(() => {
+    const trimmed = searchInput.trim();
+    if (trimmed === q) return;
+    const t = setTimeout(() => {
+      setParam("q", trimmed === "" ? null : trimmed);
+    }, 250);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- setParam é estável o suficiente; q vem da URL
+  }, [searchInput, q]);
+
   const foldersQuery = useQuery({
     queryKey: queryKeys.folders.list(folderId),
     queryFn: () => foldersApi.list({ parentId: folderId ?? "root" }),
+    enabled: !filtersActive,
   });
 
   // `keepPreviousData` evita o "flash" de tela vazia ao trocar de página —
   // os cards anteriores ficam visíveis enquanto a próxima página chega.
   const workflowsQuery = useQuery({
-    queryKey: queryKeys.workflows.list(folderId, page),
+    queryKey: queryKeys.workflows.list(folderId, page, { status, q }),
     queryFn: () =>
       workflowsApi.list({
         limit: PAGE_SIZE,
         offset: (page - 1) * PAGE_SIZE,
-        folderId: folderId ?? "root",
+        // Com filtros ativos a busca passa a ser global; sem filtros mantém o
+        // escopo da pasta atual (inclui "root" pra ver os soltos).
+        ...(filtersActive ? {} : { folderId: folderId ?? "root" }),
+        ...(status && { status }),
+        ...(q && { q }),
       }),
     placeholderData: keepPreviousData,
   });
@@ -188,14 +233,18 @@ export default function WorkflowsListRoute() {
   const workflowsTotal = workflowsQuery.data?.total ?? 0;
   const totalPages = Math.max(1, Math.ceil(workflowsTotal / PAGE_SIZE));
 
-  function setParam(key: "folder" | "page" | "view", value: string | null) {
+  function setParam(
+    key: "folder" | "page" | "view" | "q" | "status",
+    value: string | null,
+  ) {
     setSearchParams(
       (prev) => {
         const next = new URLSearchParams(prev);
         if (value === null) next.delete(key);
         else next.set(key, value);
-        // Trocar de pasta zera a página — manter o offset levaria ao limbo "out of range".
-        if (key === "folder") next.delete("page");
+        // Mudar pasta, busca ou status invalida a paginação — manter o offset
+        // anterior levaria a uma página fora do range no novo conjunto.
+        if (key === "folder" || key === "q" || key === "status") next.delete("page");
         return next;
       },
       { replace: false },
@@ -212,7 +261,9 @@ export default function WorkflowsListRoute() {
 
   // Só travamos a UI no carregamento inicial; refetches em segundo plano
   // (após mutações ou troca de página com placeholder) mantêm o conteúdo visível.
-  const loading = foldersQuery.isPending || workflowsQuery.isPending;
+  // `isPending` continua `true` quando a query está desabilitada (folders sob
+  // filtros ativos) — `isLoading` reflete o estado real de fetching.
+  const loading = foldersQuery.isLoading || workflowsQuery.isPending;
   const error =
     (foldersQuery.error instanceof Error ? foldersQuery.error.message : null) ??
     (workflowsQuery.error instanceof Error ? workflowsQuery.error.message : null);
@@ -271,6 +322,20 @@ export default function WorkflowsListRoute() {
           </Button>
         </div>
       </div>
+
+      <FiltersBar
+        search={searchInput}
+        onSearchChange={setSearchInput}
+        status={status}
+        onStatusChange={(s) => setParam("status", s)}
+        active={filtersActive}
+        onClear={() => {
+          setSearchInput("");
+          setParam("q", null);
+          setParam("status", null);
+        }}
+        resultCount={workflowsQuery.data?.total}
+      />
 
       {error && (
         <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -457,19 +522,113 @@ function PagerBar({
   );
 }
 
+/* -------------------------------------------------------------------------- */
+/* Filtros                                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Barra de pesquisa + filtro de status. Mantém o input controlado pelo
+ * pai (debounce sobre a URL fica fora daqui) e exibe um "Limpar" só quando
+ * há ao menos um filtro ativo, evitando ruído visual no estado padrão.
+ */
+function FiltersBar({
+  search,
+  onSearchChange,
+  status,
+  onStatusChange,
+  active,
+  onClear,
+  resultCount,
+}: {
+  search: string;
+  onSearchChange: (v: string) => void;
+  status: WorkflowStatus | null;
+  onStatusChange: (v: WorkflowStatus | null) => void;
+  active: boolean;
+  onClear: () => void;
+  resultCount: number | undefined;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="relative min-w-0 flex-1 sm:max-w-sm">
+        <Search className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground" />
+        <Input
+          value={search}
+          onChange={(e) => onSearchChange(e.target.value)}
+          placeholder="Pesquisar por nome…"
+          aria-label="Pesquisar workflows"
+          className="pl-8"
+        />
+        {search.length > 0 && (
+          <button
+            type="button"
+            aria-label="Limpar pesquisa"
+            onClick={() => onSearchChange("")}
+            className="absolute top-1/2 right-2 inline-flex size-5 -translate-y-1/2 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-muted hover:text-foreground"
+          >
+            <X className="size-3.5" />
+          </button>
+        )}
+      </div>
+
+      <Select
+        value={status ?? "all"}
+        onValueChange={(v) => onStatusChange(v === "all" ? null : (v as WorkflowStatus))}
+      >
+        <SelectTrigger size="sm" className="w-[160px]" aria-label="Filtrar por status">
+          <SelectValue placeholder="Status" />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Todos os status</SelectItem>
+          {STATUSES.map((s) => (
+            <SelectItem key={s} value={s}>
+              {statusMeta[s].label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+
+      {active && (
+        <>
+          <Button variant="ghost" size="sm" onClick={onClear}>
+            <X className="size-4" />
+            Limpar
+          </Button>
+          {typeof resultCount === "number" && (
+            <span className="text-xs text-muted-foreground">
+              {resultCount} resultado{resultCount === 1 ? "" : "s"}
+            </span>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function WorkflowActionsMenu({
   status,
   duplicating,
+  togglingStatus,
   onDuplicate,
   onRename,
   onMove,
+  onToggleStatus,
+  onDelete,
 }: {
   status: WorkflowStatus;
   duplicating: boolean;
+  togglingStatus: boolean;
   onDuplicate: () => void;
   onRename: () => void;
   onMove: () => void;
+  onToggleStatus: () => void;
+  onDelete: () => void;
 }) {
+  // "Ativar" só faz sentido pra workflows pausados; rascunho/arquivado ficam de fora.
+  const canPause = status === "active";
+  const canActivate = status === "paused";
+  const showToggle = canPause || canActivate;
+
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -478,17 +637,18 @@ function WorkflowActionsMenu({
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        <DropdownMenuItem>
-          {status === "active" ? (
-            <>
-              <Pause className="size-4" /> Pausar
-            </>
-          ) : (
-            <>
-              <Play className="size-4" /> Ativar
-            </>
-          )}
-        </DropdownMenuItem>
+        {showToggle && (
+          <DropdownMenuItem onSelect={onToggleStatus} disabled={togglingStatus}>
+            {togglingStatus ? (
+              <Loader2 className="size-4 animate-spin" />
+            ) : canPause ? (
+              <Pause className="size-4" />
+            ) : (
+              <Play className="size-4" />
+            )}
+            {canPause ? "Pausar" : "Ativar"}
+          </DropdownMenuItem>
+        )}
         <DropdownMenuItem onSelect={onDuplicate} disabled={duplicating}>
           {duplicating ? <Loader2 className="size-4 animate-spin" /> : <Copy className="size-4" />}
           Duplicar
@@ -496,7 +656,10 @@ function WorkflowActionsMenu({
         <DropdownMenuItem onSelect={onRename}>Renomear</DropdownMenuItem>
         <DropdownMenuItem onSelect={onMove}>Mover para…</DropdownMenuItem>
         <DropdownMenuSeparator />
-        <DropdownMenuItem className="text-destructive focus:text-destructive">
+        <DropdownMenuItem
+          onSelect={onDelete}
+          className="text-destructive focus:text-destructive"
+        >
           Excluir
         </DropdownMenuItem>
       </DropdownMenuContent>
@@ -517,6 +680,7 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 }
 
 function FolderCard({ folder, onOpen }: { folder: Folder; onOpen: () => void }) {
+  const actions = useFolderActions(folder);
   return (
     <div className="group relative">
       <button
@@ -539,17 +703,66 @@ function FolderCard({ folder, onOpen }: { folder: Folder; onOpen: () => void }) 
         </div>
       </button>
       <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <ActionsMenu kind="folder" />
+        <FolderActionsMenu onDelete={() => actions.setDeleteOpen(true)} />
       </div>
+      <FolderDeleteDialog folder={folder} actions={actions} />
     </div>
   );
 }
 
-function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen: () => void }) {
-  const meta = statusMeta[workflow.status];
+function useFolderActions(folder: Folder) {
+  const queryClient = useQueryClient();
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const deleteMutation = useMutation({
+    mutationFn: () => foldersApi.remove(folder.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.folders.all });
+      // Workflows que estavam dentro podem ter perdido o folderId — revalida
+      // a lista pra refletir o estado real (backend decide remoção ou orfã).
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+      setDeleteOpen(false);
+    },
+  });
+  return { deleteOpen, setDeleteOpen, deleteMutation };
+}
+
+function FolderDeleteDialog({
+  folder,
+  actions,
+}: {
+  folder: Folder;
+  actions: ReturnType<typeof useFolderActions>;
+}) {
+  return (
+    <ConfirmDialog
+      open={actions.deleteOpen}
+      onOpenChange={actions.setDeleteOpen}
+      title="Excluir pasta?"
+      description={
+        <>
+          <strong>{folder.name}</strong> será removida. Workflows dentro dela podem ser afetados
+          (verifique antes).
+        </>
+      }
+      confirmLabel="Excluir"
+      destructive
+      loading={actions.deleteMutation.isPending}
+      onConfirm={() => actions.deleteMutation.mutate()}
+    />
+  );
+}
+
+/**
+ * Mutations e estado de dialogs por workflow — compartilhado entre o card
+ * e a linha da tabela. Mantém a UI fina: cada consumidor renderiza só os
+ * triggers, esse hook cuida de duplicar/togglar status/excluir + dialogs
+ * de renomear, mover e confirmar exclusão.
+ */
+function useWorkflowActions(workflow: WorkflowSummary) {
   const queryClient = useQueryClient();
   const [renameOpen, setRenameOpen] = useState(false);
   const [moveOpen, setMoveOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
 
   // Duplicar: precisamos da `definition` (não vem no `WorkflowSummary`), então
   // GET completo + POST. O backend gera novo id; nome ganha prefixo "Cópia de".
@@ -567,6 +780,54 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
       queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
     },
   });
+
+  // Toggle de status: active ↔ paused. Outros estados (draft/archived) não
+  // expõem o item no menu, então aqui assumimos a transição binária.
+  const toggleStatusMutation = useMutation({
+    mutationFn: () => {
+      const next: WorkflowStatus = workflow.status === "active" ? "paused" : "active";
+      return workflowsApi.update(workflow.id, { status: next });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+    },
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: () => workflowsApi.remove(workflow.id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+      setDeleteOpen(false);
+    },
+  });
+
+  return {
+    renameOpen,
+    setRenameOpen,
+    moveOpen,
+    setMoveOpen,
+    deleteOpen,
+    setDeleteOpen,
+    duplicateMutation,
+    toggleStatusMutation,
+    deleteMutation,
+  };
+}
+
+function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen: () => void }) {
+  const meta = statusMeta[workflow.status];
+  const actions = useWorkflowActions(workflow);
+  const {
+    renameOpen,
+    setRenameOpen,
+    moveOpen,
+    setMoveOpen,
+    deleteOpen,
+    setDeleteOpen,
+    duplicateMutation,
+    toggleStatusMutation,
+    deleteMutation,
+  } = actions;
 
   return (
     <Card className="group relative gap-0 overflow-hidden p-0 transition-colors hover:bg-muted/40">
@@ -610,9 +871,12 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
         <WorkflowActionsMenu
           status={workflow.status}
           duplicating={duplicateMutation.isPending}
+          togglingStatus={toggleStatusMutation.isPending}
           onDuplicate={() => duplicateMutation.mutate()}
           onRename={() => setRenameOpen(true)}
           onMove={() => setMoveOpen(true)}
+          onToggleStatus={() => toggleStatusMutation.mutate()}
+          onDelete={() => setDeleteOpen(true)}
         />
       </div>
 
@@ -628,11 +892,26 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
         workflowId={workflow.id}
         currentFolderId={workflow.folderId}
       />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Excluir workflow?"
+        description={
+          <>
+            <strong>{workflow.name}</strong> será removido permanentemente. Esta ação não pode
+            ser desfeita.
+          </>
+        }
+        confirmLabel="Excluir"
+        destructive
+        loading={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
+      />
     </Card>
   );
 }
 
-function ActionsMenu({ kind }: { kind: "folder" }) {
+function FolderActionsMenu({ onDelete }: { onDelete: () => void }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -641,16 +920,16 @@ function ActionsMenu({ kind }: { kind: "folder" }) {
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {kind === "folder" && (
-          <>
-            <DropdownMenuItem>Renomear</DropdownMenuItem>
-            <DropdownMenuItem>Mover para…</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive">
-              Excluir
-            </DropdownMenuItem>
-          </>
-        )}
+        {/* Renomear/Mover ainda não implementados — endpoints do back precisam, deixo TODO. */}
+        <DropdownMenuItem disabled>Renomear</DropdownMenuItem>
+        <DropdownMenuItem disabled>Mover para…</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem
+          onSelect={onDelete}
+          className="text-destructive focus:text-destructive"
+        >
+          Excluir
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -737,26 +1016,7 @@ function WorkflowsTable({
         </TableHeader>
         <TableBody>
           {folders.map((f) => (
-            <TableRow
-              key={`folder-${f.id}`}
-              onClick={() => onEnterFolder(f.id)}
-              className="cursor-pointer"
-            >
-              <TableCell className="font-medium">
-                <span className="inline-flex items-center gap-2">
-                  <FolderIcon className="w-5 text-primary" />
-                  {f.name}
-                </span>
-              </TableCell>
-              <TableCell className="text-muted-foreground">Pasta</TableCell>
-              <TableCell className="text-muted-foreground">—</TableCell>
-              <TableCell className="text-muted-foreground">
-                {formatRelative(f.updatedAt)}
-              </TableCell>
-              <TableCell onClick={(e) => e.stopPropagation()}>
-                <ActionsMenu kind="folder" />
-              </TableCell>
-            </TableRow>
+            <FolderTableRow key={`folder-${f.id}`} folder={f} onOpen={() => onEnterFolder(f.id)} />
           ))}
           {workflows.map((w) => (
             <WorkflowTableRow key={w.id} workflow={w} onOpen={() => onOpenWorkflow(w.id)} />
@@ -764,6 +1024,31 @@ function WorkflowsTable({
         </TableBody>
       </Table>
     </div>
+  );
+}
+
+function FolderTableRow({ folder, onOpen }: { folder: Folder; onOpen: () => void }) {
+  const actions = useFolderActions(folder);
+  return (
+    <>
+      <TableRow onClick={onOpen} className="cursor-pointer">
+        <TableCell className="font-medium">
+          <span className="inline-flex items-center gap-2">
+            <FolderIcon className="w-5 text-primary" />
+            {folder.name}
+          </span>
+        </TableCell>
+        <TableCell className="text-muted-foreground">Pasta</TableCell>
+        <TableCell className="text-muted-foreground">—</TableCell>
+        <TableCell className="text-muted-foreground">
+          {formatRelative(folder.updatedAt)}
+        </TableCell>
+        <TableCell onClick={(e) => e.stopPropagation()}>
+          <FolderActionsMenu onDelete={() => actions.setDeleteOpen(true)} />
+        </TableCell>
+      </TableRow>
+      <FolderDeleteDialog folder={folder} actions={actions} />
+    </>
   );
 }
 
@@ -775,24 +1060,17 @@ function WorkflowTableRow({
   onOpen: () => void;
 }) {
   const meta = statusMeta[workflow.status];
-  const queryClient = useQueryClient();
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [moveOpen, setMoveOpen] = useState(false);
-
-  const duplicateMutation = useMutation({
-    mutationFn: async () => {
-      const full = await workflowsApi.get(workflow.id);
-      return workflowsApi.create({
-        name: `Cópia de ${workflow.name}`,
-        ...(full.description !== null && { description: full.description }),
-        folderId: workflow.folderId,
-        definition: full.definition,
-      });
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
-    },
-  });
+  const {
+    renameOpen,
+    setRenameOpen,
+    moveOpen,
+    setMoveOpen,
+    deleteOpen,
+    setDeleteOpen,
+    duplicateMutation,
+    toggleStatusMutation,
+    deleteMutation,
+  } = useWorkflowActions(workflow);
 
   return (
     <>
@@ -814,9 +1092,12 @@ function WorkflowTableRow({
           <WorkflowActionsMenu
             status={workflow.status}
             duplicating={duplicateMutation.isPending}
+            togglingStatus={toggleStatusMutation.isPending}
             onDuplicate={() => duplicateMutation.mutate()}
             onRename={() => setRenameOpen(true)}
             onMove={() => setMoveOpen(true)}
+            onToggleStatus={() => toggleStatusMutation.mutate()}
+            onDelete={() => setDeleteOpen(true)}
           />
         </TableCell>
       </TableRow>
@@ -832,6 +1113,21 @@ function WorkflowTableRow({
         onOpenChange={setMoveOpen}
         workflowId={workflow.id}
         currentFolderId={workflow.folderId}
+      />
+      <ConfirmDialog
+        open={deleteOpen}
+        onOpenChange={setDeleteOpen}
+        title="Excluir workflow?"
+        description={
+          <>
+            <strong>{workflow.name}</strong> será removido permanentemente. Esta ação não pode
+            ser desfeita.
+          </>
+        }
+        confirmLabel="Excluir"
+        destructive
+        loading={deleteMutation.isPending}
+        onConfirm={() => deleteMutation.mutate()}
       />
     </>
   );

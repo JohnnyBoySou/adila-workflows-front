@@ -16,8 +16,19 @@ export const queryKeys = {
   },
   workflows: {
     all: ["workflows"] as const,
-    list: (folderId: string | null, page: number) =>
-      ["workflows", "list", folderId ?? "root", page] as const,
+    list: (
+      folderId: string | null,
+      page: number,
+      filters?: { status?: string | null; q?: string | null },
+    ) =>
+      [
+        "workflows",
+        "list",
+        folderId ?? "root",
+        page,
+        filters?.status ?? "all",
+        filters?.q ?? "",
+      ] as const,
     detail: (id: string) => ["workflows", "detail", id] as const,
   },
   runs: {

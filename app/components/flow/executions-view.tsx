@@ -31,18 +31,43 @@ type ExecutionsViewProps = {
 
 const STATUS_META: Record<
   RunStatus,
-  { icon: LucideIcon; label: string; color: string; dot: string }
+  { icon: LucideIcon; label: string; color: string; dot: string; border: string }
 > = {
-  queued: { icon: Clock, label: "Na fila", color: "text-muted-foreground", dot: "bg-muted" },
-  running: { icon: Loader2, label: "Em execução", color: "text-sky-600", dot: "bg-sky-500" },
+  queued: {
+    icon: Clock,
+    label: "Na fila",
+    color: "text-muted-foreground",
+    dot: "bg-muted",
+    border: "border-l-muted-foreground/30",
+  },
+  running: {
+    icon: Loader2,
+    label: "Em execução",
+    color: "text-sky-600",
+    dot: "bg-sky-500",
+    border: "border-l-sky-500",
+  },
   success: {
     icon: CheckCircle2,
     label: "Sucesso",
     color: "text-emerald-600",
     dot: "bg-emerald-500",
+    border: "border-l-emerald-500",
   },
-  failed: { icon: XCircle, label: "Falhou", color: "text-rose-600", dot: "bg-rose-500" },
-  cancelled: { icon: Ban, label: "Cancelado", color: "text-amber-600", dot: "bg-amber-500" },
+  failed: {
+    icon: XCircle,
+    label: "Falhou",
+    color: "text-rose-600",
+    dot: "bg-rose-500",
+    border: "border-l-rose-500",
+  },
+  cancelled: {
+    icon: Ban,
+    label: "Cancelado",
+    color: "text-amber-600",
+    dot: "bg-amber-500",
+    border: "border-l-amber-500",
+  },
 };
 
 const TERMINAL_STATUSES = new Set<RunStatus>(["success", "failed", "cancelled"]);
@@ -55,9 +80,20 @@ const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
   second: "2-digit",
 });
 
+const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
 function formatDate(iso: string | null): string {
   if (!iso) return "—";
   return dateFormatter.format(new Date(iso));
+}
+
+function formatTime(iso: string | null): string {
+  if (!iso) return "—";
+  return timeFormatter.format(new Date(iso));
 }
 
 function formatDuration(run: WorkflowRun): string {
@@ -90,6 +126,8 @@ export function ExecutionsView({
     },
   });
 
+  const runs = runsQuery.data ?? [];
+
   // Run recém-disparado pelo botão Play é selecionado automaticamente.
   useEffect(() => {
     if (focusedRunId) {
@@ -98,7 +136,13 @@ export function ExecutionsView({
     }
   }, [focusedRunId, onFocusedRunHandled]);
 
-  const runs = runsQuery.data ?? [];
+  // Seleção default: primeiro run da lista assim que carrega.
+  useEffect(() => {
+    if (selectedRunId) return;
+    if (runs.length === 0) return;
+    setSelectedRunId(runs[0].id);
+  }, [runs, selectedRunId]);
+
   const counts = runs.reduce(
     (acc, r) => {
       acc[r.status] = (acc[r.status] ?? 0) + 1;
@@ -108,28 +152,29 @@ export function ExecutionsView({
   );
 
   return (
-    <div className="h-full overflow-y-auto bg-background">
-      <div className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6 flex items-end justify-between gap-4">
+    <div className="flex h-full w-full overflow-hidden bg-background">
+      {/* Aside esquerdo — lista de runs */}
+      <aside className="flex w-80 shrink-0 flex-col border-r border-border bg-card">
+        <header className="flex items-center justify-between gap-2 border-b border-border px-4 py-3">
           <div>
-            <h2 className="font-heading text-xl font-medium text-foreground">Execuções</h2>
-            <p className="mt-1 text-sm text-muted-foreground">Histórico de runs deste workflow.</p>
+            <h2 className="font-heading text-sm font-medium text-foreground">Execuções</h2>
+            <p className="text-xs text-muted-foreground">{runs.length} runs</p>
           </div>
-          <div className="flex items-center gap-4 text-xs text-muted-foreground">
+          <div className="flex items-center gap-3 text-xs text-muted-foreground">
             {counts.success ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-emerald-500" /> {counts.success} sucesso
+              <span className="inline-flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-emerald-500" /> {counts.success}
               </span>
             ) : null}
             {counts.failed ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-rose-500" /> {counts.failed} falha
+              <span className="inline-flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-rose-500" /> {counts.failed}
               </span>
             ) : null}
             {counts.running || counts.queued ? (
-              <span className="inline-flex items-center gap-1.5">
-                <span className="size-2 rounded-full bg-sky-500" />{" "}
-                {(counts.running ?? 0) + (counts.queued ?? 0)} ativa
+              <span className="inline-flex items-center gap-1">
+                <span className="size-1.5 rounded-full bg-sky-500" />{" "}
+                {(counts.running ?? 0) + (counts.queued ?? 0)}
               </span>
             ) : null}
             <Button
@@ -142,88 +187,121 @@ export function ExecutionsView({
               title="Recarregar"
               disabled={runsQuery.isFetching}
             >
-              <RefreshCw className={cn("size-4", runsQuery.isFetching && "animate-spin")} />
+              <RefreshCw className={cn("size-3.5", runsQuery.isFetching && "animate-spin")} />
             </Button>
           </div>
-        </div>
+        </header>
 
-        {runsQuery.isPending ? (
-          <div className="grid place-items-center rounded-md border border-dashed py-16 text-sm text-muted-foreground">
-            <span className="inline-flex items-center gap-2">
-              <Loader2 className="size-4 animate-spin" /> Carregando…
-            </span>
-          </div>
-        ) : runs.length === 0 ? (
-          <EmptyState />
-        ) : (
-          <div className="overflow-hidden rounded-lg border border-border bg-card">
-            <div className="grid grid-cols-[1.4fr_1.4fr_1fr_1fr_auto] gap-4 border-b border-border bg-muted/40 px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              <span>Status</span>
-              <span>Início</span>
-              <span>Duração</span>
-              <span>Fim</span>
-              <span className="w-24 text-right">ID</span>
+        <div className="flex-1 overflow-y-auto">
+          {runsQuery.isPending ? (
+            <div className="grid place-items-center py-16 text-xs text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
             </div>
+          ) : runs.length === 0 ? (
+            <AsideEmptyState />
+          ) : (
             <ul>
-              {runs.map((run, i) => {
-                const meta = STATUS_META[run.status];
-                const Icon = meta.icon;
-                const isRunning = run.status === "running";
-                return (
-                  <motion.li
-                    key={run.id}
-                    initial={{ opacity: 0, y: 6 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: i * 0.02, type: "spring", stiffness: 380, damping: 30 }}
-                    className={cn(
-                      "grid cursor-pointer grid-cols-[1.4fr_1.4fr_1fr_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/30",
-                      selectedRunId === run.id && "bg-muted/50",
-                    )}
-                    onClick={() => setSelectedRunId(run.id)}
-                  >
-                    <span className={cn("inline-flex items-center gap-2 font-medium", meta.color)}>
-                      <Icon className={cn("size-4", isRunning && "animate-spin")} />
-                      {meta.label}
-                    </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {formatDate(run.startedAt ?? run.createdAt)}
-                    </span>
-                    <span className="tabular-nums text-muted-foreground">
-                      {formatDuration(run)}
-                    </span>
-                    <span className="text-muted-foreground tabular-nums">
-                      {formatDate(run.finishedAt)}
-                    </span>
-                    <span className="w-24 truncate text-right font-mono text-xs text-muted-foreground">
-                      {run.id.slice(0, 8)}
-                    </span>
-                  </motion.li>
-                );
-              })}
+              {runs.map((run, i) => (
+                <RunListItem
+                  key={run.id}
+                  run={run}
+                  index={i}
+                  selected={selectedRunId === run.id}
+                  onSelect={() => setSelectedRunId(run.id)}
+                />
+              ))}
             </ul>
-          </div>
-        )}
+          )}
+        </div>
+      </aside>
 
-        {selectedRunId && (
-          <RunDetailPanel
-            workflowId={workflowId}
-            runId={selectedRunId}
-            onClose={() => setSelectedRunId(null)}
-          />
+      {/* Detalhe à direita */}
+      <section className="flex-1 overflow-y-auto">
+        {selectedRunId ? (
+          <RunDetailPanel workflowId={workflowId} runId={selectedRunId} />
+        ) : (
+          <DetailEmptyState hasRuns={runs.length > 0} />
         )}
+      </section>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Item compacto da lista lateral                                              */
+/* -------------------------------------------------------------------------- */
+
+function RunListItem({
+  run,
+  index,
+  selected,
+  onSelect,
+}: {
+  run: WorkflowRun;
+  index: number;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  const meta = STATUS_META[run.status];
+  const Icon = meta.icon;
+  const isRunning = run.status === "running";
+
+  return (
+    <motion.li
+      initial={{ opacity: 0, x: -6 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ delay: Math.min(index, 10) * 0.02, type: "spring", stiffness: 380, damping: 30 }}
+    >
+      <button
+        type="button"
+        onClick={onSelect}
+        className={cn(
+          "flex w-full flex-col gap-1 border-b border-border border-l-2 px-3 py-2.5 text-left transition-colors hover:bg-muted/40",
+          meta.border,
+          selected && "bg-muted/60",
+        )}
+      >
+        <div className="flex items-center justify-between gap-2">
+          <span className={cn("inline-flex items-center gap-1.5 text-xs font-medium", meta.color)}>
+            <Icon className={cn("size-3.5", isRunning && "animate-spin")} />
+            {meta.label}
+          </span>
+          <span className="font-mono text-[10px] text-muted-foreground">
+            {run.id.slice(0, 8)}
+          </span>
+        </div>
+        <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+          <span>{formatTime(run.startedAt ?? run.createdAt)}</span>
+          <span>{formatDuration(run)}</span>
+        </div>
+      </button>
+    </motion.li>
+  );
+}
+
+function AsideEmptyState() {
+  return (
+    <div className="grid place-items-center px-4 py-12 text-center">
+      <div className="space-y-2">
+        <PlayCircle className="mx-auto size-5 text-muted-foreground/60" />
+        <p className="text-xs text-muted-foreground">Nenhuma execução ainda.</p>
       </div>
     </div>
   );
 }
 
-function EmptyState() {
+function DetailEmptyState({ hasRuns }: { hasRuns: boolean }) {
   return (
-    <div className="grid place-items-center rounded-md border border-dashed py-16 text-center">
+    <div className="grid h-full place-items-center px-6 text-center">
       <div className="space-y-2">
-        <PlayCircle className="mx-auto size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">Nenhuma execução ainda</p>
+        <PlayCircle className="mx-auto size-8 text-muted-foreground/60" />
+        <p className="text-sm font-medium">
+          {hasRuns ? "Selecione um run pra ver os detalhes" : "Nenhuma execução ainda"}
+        </p>
         <p className="text-xs text-muted-foreground">
-          Clique no botão Play para disparar o workflow manualmente.
+          {hasRuns
+            ? "Escolha uma execução na lista ao lado."
+            : "Clique no botão Play para disparar o workflow manualmente."}
         </p>
       </div>
     </div>
@@ -234,15 +312,7 @@ function EmptyState() {
 /* Painel de detalhe — steps em ordem, com SSE se o run ainda estiver vivo.    */
 /* -------------------------------------------------------------------------- */
 
-function RunDetailPanel({
-  workflowId,
-  runId,
-  onClose,
-}: {
-  workflowId: string;
-  runId: string;
-  onClose: () => void;
-}) {
+function RunDetailPanel({ workflowId, runId }: { workflowId: string; runId: string }) {
   const queryClient = useQueryClient();
 
   const runQuery = useQuery({
@@ -260,7 +330,7 @@ function RunDetailPanel({
 
   // Espelha os steps deste run no store de execução para o canvas pintar
   // os nós e o inspector lateral exibir input/output. Limpa ao desmontar
-  // (fechar o painel) — o inspector fecha junto.
+  // (trocar run / fechar painel) — o inspector fecha junto.
   const setFocused = useExecutionStore((s) => s.setFocused);
   const clearExecution = useExecutionStore((s) => s.clear);
   useEffect(() => {
@@ -323,7 +393,7 @@ function RunDetailPanel({
 
   if (runQuery.isPending) {
     return (
-      <div className="mt-6 rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+      <div className="grid h-full place-items-center text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin" />
       </div>
     );
@@ -335,14 +405,15 @@ function RunDetailPanel({
   const isTerminal = TERMINAL_STATUSES.has(run.status);
 
   return (
-    <div className="mt-6 overflow-hidden rounded-lg border border-border bg-card">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+    <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
+      {/* Header do detalhe */}
+      <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-3">
-          <span className={cn("inline-flex items-center gap-2 font-medium", meta.color)}>
+          <span className={cn("inline-flex items-center gap-2 text-sm font-medium", meta.color)}>
             <meta.icon className={cn("size-4", run.status === "running" && "animate-spin")} />
             {meta.label}
           </span>
-          <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 12)}</span>
+          <span className="font-mono text-xs text-muted-foreground">{run.id}</span>
         </div>
         <div className="flex items-center gap-2">
           {!isTerminal && (
@@ -366,19 +437,18 @@ function RunDetailPanel({
               Reexecutar
             </Button>
           )}
-          <Button size="sm" variant="ghost" onClick={onClose}>
-            Fechar
-          </Button>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-4 border-b border-border bg-muted/30 px-4 py-3 text-xs">
+      {/* Metadados */}
+      <div className="grid grid-cols-3 gap-4 rounded-lg border border-border bg-muted/30 px-4 py-3 text-xs">
         <Field label="Criado">{formatDate(run.createdAt)}</Field>
         <Field label="Início">{formatDate(run.startedAt)}</Field>
         <Field label="Fim">{formatDate(run.finishedAt)}</Field>
       </div>
 
-      <div className="space-y-3 p-4">
+      {/* Conteúdo */}
+      <div className="space-y-4 rounded-lg border border-border bg-card p-4">
         {(run.input || run.output) && (
           <div className="grid gap-2 sm:grid-cols-2">
             {run.input && <JsonBlock label="Input do run" data={run.input} />}

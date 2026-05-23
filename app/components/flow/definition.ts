@@ -104,12 +104,27 @@ export function serializeDefinition(
     };
   });
 
-  const persistedEdges: PersistedEdge[] = edges.map((e) => ({
-    from: e.source,
-    to: e.target,
-    // sourceHandle vira label (usado por if/switch pra rotular saída).
-    ...(e.sourceHandle && { label: e.sourceHandle }),
-  }));
+  const persistedEdges: PersistedEdge[] = edges.map((e) => {
+    // Label vem de três fontes (ordem de prioridade): data.label (set pela
+    // hidratação a partir do import), label visível (RF aceita string aqui),
+    // sourceHandle (legado — edges manuais já têm null, mas guardamos por
+    // segurança). NÃO usamos sourceHandle pra carregar label porque o nó
+    // só tem um Handle sem id; setar sourceHandle faz a edge sumir do canvas.
+    const dataLabel = (e.data as { label?: unknown } | undefined)?.label;
+    const label =
+      typeof dataLabel === "string"
+        ? dataLabel
+        : typeof e.label === "string"
+          ? e.label
+          : typeof e.sourceHandle === "string"
+            ? e.sourceHandle
+            : undefined;
+    return {
+      from: e.source,
+      to: e.target,
+      ...(label && { label }),
+    };
+  });
 
   return { ...base, nodes: persistedNodes, edges: persistedEdges };
 }
@@ -221,12 +236,18 @@ export function hydrateDefinition(definition: unknown): { nodes: Node[]; edges: 
       const from = (e as PersistedEdge).from;
       const to = (e as PersistedEdge).to;
       if (typeof from !== "string" || typeof to !== "string") return;
+      const label = (e as PersistedEdge).label;
       edges.push({
         id: `e${idx}-${from}-${to}`,
         source: from,
         target: to,
         animated: true,
-        ...((e as PersistedEdge).label && { sourceHandle: (e as PersistedEdge).label }),
+        // Label vira texto visível na edge + cópia em data pra roundtrip de
+        // serialização. NÃO usamos sourceHandle: o WorkflowNode só tem um
+        // Handle source sem id, então qualquer sourceHandle != null faz o
+        // React Flow descartar a edge da renderização (sintoma: import do
+        // n8n perde conexões com label "ai_languageModel", "0", "true"…).
+        ...(label && { label, data: { label } }),
       });
     });
   }

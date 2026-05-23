@@ -221,7 +221,7 @@ function newKvRow(k: string, v: string): KvRow {
   return { id: crypto.randomUUID(), k, v };
 }
 
-function KeyValueEditor({
+export function KeyValueEditor({
   value,
   onChange,
 }: {

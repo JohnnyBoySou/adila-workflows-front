@@ -5,8 +5,13 @@ import { AlertTriangle, Loader2 } from "lucide-react";
 
 import type { Route } from "./+types/flow";
 import { WorkflowCanvas, type WorkflowCanvasHandle } from "~/components/flow/workflow-canvas";
+import {
+  WORKFLOW_NODE_PLAY_EVENT,
+  type WorkflowNodePlayDetail,
+} from "~/components/flow/workflow-node";
 import { FlowTopBar, type FlowTab, type SaveState } from "~/components/flow/flow-top-bar";
 import { WorkflowInfoDialog, type WorkflowInfo } from "~/components/flow/workflow-info-dialog";
+import { ConnectionsManagerDialog } from "~/components/database-connections/connections-manager-dialog";
 import { ExecutionsView } from "~/components/flow/executions-view";
 import { Button } from "~/components/ui/button";
 import * as workflowsApi from "~/services/workflows";
@@ -14,6 +19,7 @@ import * as runsApi from "~/services/runs";
 import type { RunStatus } from "~/services/runs";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
+import { pinnedDataApi } from "~/stores/pinned-data";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -35,6 +41,7 @@ export default function FlowRoute() {
 
   const [tab, setTab] = useState<FlowTab>("editor");
   const [infoOpen, setInfoOpen] = useState(false);
+  const [connectionsOpen, setConnectionsOpen] = useState(false);
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
@@ -142,8 +149,16 @@ export default function FlowRoute() {
   );
 
   // ── Run: dispara o workflow e troca pra aba de execuções ───────────────
+  // `pinnedData` é lido no momento do disparo (vive em localStorage, fora
+  // do React Query) — assim cada run pega o snapshot mais recente, sem
+  // precisar de reatividade aqui.
   const runMutation = useMutation({
-    mutationFn: () => workflowsApi.run(id!),
+    mutationFn: () => {
+      const pinnedData = id ? pinnedDataApi.get(id) : {};
+      return workflowsApi.run(id!, {
+        ...(Object.keys(pinnedData).length > 0 && { pinnedData }),
+      });
+    },
     onSuccess: (res) => {
       setFocusedRunId(res.runId);
       setTab("executions");
@@ -158,6 +173,20 @@ export default function FlowRoute() {
     if (saveState === "dirty") flushSave();
     runMutation.mutate();
   }, [id, saveState, flushSave, runMutation]);
+
+  // Botão "play" dentro do node toolbar emite via window — escutamos aqui
+  // pra disparar a execução sem acoplar o componente leaf à mutation.
+  // (O backend ainda não suporta start-from-node, então hoje sempre roda o
+  // workflow inteiro; o nodeId fica disponível pra quando suportar.)
+  useEffect(() => {
+    function onPlayFromNode(_e: Event) {
+      const _evt = _e as CustomEvent<WorkflowNodePlayDetail>;
+      void _evt;
+      handleRun();
+    }
+    window.addEventListener(WORKFLOW_NODE_PLAY_EVENT, onPlayFromNode);
+    return () => window.removeEventListener(WORKFLOW_NODE_PLAY_EVENT, onPlayFromNode);
+  }, [handleRun]);
 
   // Persistir mudanças de info (nome/descrição).
   const handleInfoSave = useCallback(
@@ -197,6 +226,7 @@ export default function FlowRoute() {
               // e re-hidrata; edições dentro do mesmo workflow não remontam.
               key={workflow.id}
               ref={canvasRef}
+              workflowId={workflow.id}
               initialDefinition={workflow.definition}
               onDirtyChange={handleDirty}
             />
@@ -215,6 +245,7 @@ export default function FlowRoute() {
           tab={tab}
           onTabChange={setTab}
           onInfoClick={() => setInfoOpen(true)}
+          onConnectionsClick={() => setConnectionsOpen(true)}
           onSave={flushSave}
           onRun={handleRun}
           saveState={saveState}
@@ -228,6 +259,12 @@ export default function FlowRoute() {
         onOpenChange={setInfoOpen}
         info={info}
         onSave={handleInfoSave}
+      />
+
+      <ConnectionsManagerDialog
+        open={connectionsOpen}
+        onOpenChange={setConnectionsOpen}
+        workflowId={workflow.id}
       />
     </main>
   );

@@ -12,6 +12,7 @@ import {
   Unlock,
   Map as MapIcon,
   Grid3x3,
+  Sparkles,
 } from "lucide-react";
 import { useReactFlow, useViewport } from "@xyflow/react";
 
@@ -21,6 +22,7 @@ import { useFlowStore } from "~/stores/flow";
 export type FlowToolbarProps = {
   onAddSticky: () => void;
   onAddContainer: () => void;
+  onAutoLayout: () => void;
 };
 
 function ToolButton({
@@ -61,7 +63,7 @@ function Divider() {
   return <div className="mx-1 h-6 w-px bg-border" aria-hidden />;
 }
 
-export function FlowToolbar({ onAddSticky, onAddContainer }: FlowToolbarProps) {
+export function FlowToolbar({ onAddSticky, onAddContainer, onAutoLayout }: FlowToolbarProps) {
   const tool = useFlowStore((s) => s.tool);
   const locked = useFlowStore((s) => s.locked);
   const miniMapVisible = useFlowStore((s) => s.miniMapVisible);
@@ -114,6 +116,9 @@ export function FlowToolbar({ onAddSticky, onAddContainer }: FlowToolbarProps) {
         </ToolButton>
         <ToolButton onClick={onAddContainer} title="Frame / Grupo — F">
           <Frame className="size-4" />
+        </ToolButton>
+        <ToolButton onClick={onAutoLayout} title="Auto-organizar — Shift A">
+          <Sparkles className="size-4" />
         </ToolButton>
 
         <Divider />

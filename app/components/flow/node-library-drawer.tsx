@@ -4,6 +4,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Database,
+  DatabaseZap,
   GitBranch,
   Search,
   Sparkles,
@@ -52,6 +53,11 @@ const CATEGORY_META: Record<NodeCategory, CategoryMeta> = {
     icon: WorkflowIcon,
     color: "text-sky-500",
     description: "Tarefas executadas pelo fluxo",
+  },
+  "Banco de Dados": {
+    icon: DatabaseZap,
+    color: "text-cyan-500",
+    description: "Conectores Postgres, Redis e afins",
   },
   Lógica: {
     icon: GitBranch,

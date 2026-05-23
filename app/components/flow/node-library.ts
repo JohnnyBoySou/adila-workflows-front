@@ -24,6 +24,7 @@ import {
   FileText,
   StickyNote,
   Frame,
+  Webhook,
   type LucideIcon,
 } from "lucide-react";
 
@@ -41,14 +42,22 @@ import type { WorkflowNodeVariant } from "./workflow-node";
  * o engine ignora visualNodeTypes na execução.
  *
  * Categorias seguem o domínio funcional, não o variant visual:
- *   - Gatilhos  → ponto de entrada do run
- *   - Ações     → I/O externo (HTTP, DB, código, resposta)
- *   - Lógica    → controle de fluxo (if/switch/loop/wait/end)
- *   - Dados     → manipulação de payload local (var, datas, crypto, listas)
- *   - IA        → LangChain-style (chat, embeddings, vetor, memória, docs)
- *   - Anotações → visuais (sticky, frame)
+ *   - Gatilhos       → ponto de entrada do run
+ *   - Ações          → I/O externo (HTTP, código, resposta)
+ *   - Banco de Dados → conectores de banco (Postgres, Redis)
+ *   - Lógica         → controle de fluxo (if/switch/loop/wait/end)
+ *   - Dados          → manipulação de payload local (var, datas, crypto, listas)
+ *   - IA             → LangChain-style (chat, embeddings, vetor, memória, docs)
+ *   - Anotações      → visuais (sticky, frame)
  */
-export type NodeCategory = "Gatilhos" | "Ações" | "Lógica" | "Dados" | "IA" | "Anotações";
+export type NodeCategory =
+  | "Gatilhos"
+  | "Ações"
+  | "Banco de Dados"
+  | "Lógica"
+  | "Dados"
+  | "IA"
+  | "Anotações";
 
 export type NodeLibraryEntry = {
   id: string;
@@ -92,6 +101,7 @@ function workflowEntry(
 // ── Cores por categoria — ecoam o `chip` do workflow-node ──────────────
 const C_TRIGGER = "text-emerald-500";
 const C_ACTION = "text-sky-500";
+const C_DB = "text-cyan-500";
 const C_LOGIC = "text-amber-500";
 const C_END = "text-rose-500";
 const C_DATA = "text-violet-500";
@@ -102,9 +112,18 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
   // ── Gatilhos ─────────────────────────────────────────────────────────
   workflowEntry(
     "start",
-    "Início",
-    "Ponto de entrada do workflow",
+    "Início (manual)",
+    "Disparado pelo botão Play do editor",
     Play,
+    C_TRIGGER,
+    "Gatilhos",
+    "trigger",
+  ),
+  workflowEntry(
+    "webhook_trigger",
+    "Webhook",
+    "Disparado por POST em URL pública",
+    Webhook,
     C_TRIGGER,
     "Gatilhos",
     "trigger",
@@ -116,24 +135,6 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
     "Requisição HTTP",
     "Chama uma API externa",
     Globe,
-    C_ACTION,
-    "Ações",
-    "action",
-  ),
-  workflowEntry(
-    "postgres",
-    "Postgres",
-    "Executa SQL em um banco Postgres",
-    Database,
-    C_ACTION,
-    "Ações",
-    "action",
-  ),
-  workflowEntry(
-    "redis",
-    "Redis",
-    "Operação de chave/valor ou lista",
-    Server,
     C_ACTION,
     "Ações",
     "action",
@@ -154,6 +155,26 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
     Send,
     C_ACTION,
     "Ações",
+    "action",
+  ),
+
+  // ── Banco de Dados ───────────────────────────────────────────────────
+  workflowEntry(
+    "postgres",
+    "Postgres",
+    "Executa SQL em um banco Postgres",
+    Database,
+    C_DB,
+    "Banco de Dados",
+    "action",
+  ),
+  workflowEntry(
+    "redis",
+    "Redis",
+    "Operação de chave/valor ou lista",
+    Server,
+    C_DB,
+    "Banco de Dados",
     "action",
   ),
 
@@ -333,6 +354,7 @@ export const NODE_LIBRARY: NodeLibraryEntry[] = [
 export const NODE_CATEGORIES: NodeCategory[] = [
   "Gatilhos",
   "Ações",
+  "Banco de Dados",
   "Lógica",
   "Dados",
   "IA",

@@ -5,6 +5,9 @@
  */
 import { $fetch, unwrap } from "./index";
 
+/** Outputs pinados pelo editor — por nodeId. Enviado no body do /run. */
+export type PinnedData = Record<string, Record<string, unknown>>;
+
 export type RunStatus = "queued" | "running" | "success" | "failed" | "cancelled";
 export type StepStatus = "running" | "success" | "failed";
 

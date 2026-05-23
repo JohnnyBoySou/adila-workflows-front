@@ -15,6 +15,8 @@ export type Trigger = {
   organizationId: string;
   workflowId: string;
   environmentId: string | null;
+  /** ID do node no canvas que representa este trigger. Nulo em triggers legacy. */
+  nodeId: string | null;
   name: string;
   type: TriggerType;
   enabled: boolean;
@@ -38,6 +40,7 @@ export type CreateWebhookTriggerInput = {
   name: string;
   enabled?: boolean;
   environmentId?: string | null;
+  nodeId?: string | null;
   webhookResponseMode?: WebhookResponseMode;
   webhookResponseTimeoutMs?: number;
 };
@@ -47,6 +50,7 @@ export type CreateCronTriggerInput = {
   name: string;
   enabled?: boolean;
   environmentId?: string | null;
+  nodeId?: string | null;
   cronExpression: string;
   timezone?: string;
 };

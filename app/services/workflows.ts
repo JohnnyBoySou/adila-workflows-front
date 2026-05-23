@@ -36,6 +36,8 @@ export type ListWorkflowsParams = {
   status?: WorkflowStatus;
   /** `"root"` → workflows sem pasta; UUID → workflows de uma pasta. */
   folderId?: string | "root";
+  /** Busca substring case-insensitive sobre o nome. */
+  q?: string;
 };
 
 export type Paginated<T> = {
@@ -72,6 +74,7 @@ export function list(params: ListWorkflowsParams = {}): Promise<Paginated<Workfl
         ...(params.offset !== undefined && { offset: params.offset }),
         ...(params.status && { status: params.status }),
         ...(params.folderId && { folderId: params.folderId }),
+        ...(params.q && params.q.trim() && { q: params.q.trim() }),
       },
     }),
   );
@@ -144,7 +147,12 @@ export function importFromN8n(
 /** Dispara uma execução manual do workflow. */
 export function run(
   id: string,
-  opts: { environmentId?: string; input?: Record<string, unknown> } = {},
+  opts: {
+    environmentId?: string;
+    input?: Record<string, unknown>;
+    /** Outputs pinados pelo editor — pulam o handler do nó no executor. */
+    pinnedData?: Record<string, Record<string, unknown>>;
+  } = {},
 ): Promise<{ runId: string; jobId?: string }> {
   return unwrap(
     $fetch<{ runId: string; jobId?: string }>(`/workflows/${id}/run`, {

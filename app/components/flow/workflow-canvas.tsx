@@ -29,11 +29,14 @@ import { FlowToolbar } from "./flow-toolbar";
 import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
+import { autoLayout } from "./auto-layout";
 import { NodeConfigDialog, type NodeMeta } from "./node-config-dialog";
 import { NodeRunInspector } from "./node-run-inspector";
+import { WorkflowIdProvider } from "./workflow-context";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
 import { useExecutionStore } from "~/stores/execution";
+import { pinnedDataApi, usePinnedData } from "~/stores/pinned-data";
 import { Button } from "~/components/ui/button";
 
 // Campos de `node.data` que pertencem ao editor, não ao engine — não
@@ -46,6 +49,8 @@ export type WorkflowCanvasHandle = {
 };
 
 type WorkflowCanvasProps = {
+  /** ID do workflow — usado pra namespacing do pinned-data e do inspector. */
+  workflowId: string;
   /** Definition cru vindo do backend; ignorado depois da primeira hidratação. */
   initialDefinition: unknown;
   /** Disparado em qualquer mudança que altere o que será salvo. */
@@ -62,7 +67,7 @@ function nextNodeId(): string {
   return `n-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
+function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   const nodeTypes = useMemo(
     () => ({
       workflow: WorkflowNodeComponent,
@@ -101,7 +106,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   const backgroundVariant = useFlowStore((s) => s.backgroundVariant);
   const setLibraryOpen = useFlowStore((s) => s.setLibraryOpen);
 
-  const { screenToFlowPosition } = useReactFlow();
+  const { screenToFlowPosition, fitView } = useReactFlow();
 
   const onConnect = useCallback(
     (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
@@ -156,7 +161,27 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
     [setNodes, centerFlowPosition],
   );
 
-  useFlowShortcuts({ onAddSticky: handleAddSticky, onAddContainer: handleAddContainer });
+  // ── Auto-organizar ─────────────────────────────────────────────────────
+  // Disparado pelo botão Sparkles na toolbar (e pelo atalho Shift+A). Aplica
+  // o layout em camadas + higiene das edges em uma única transação de state,
+  // depois ajusta o viewport pra mostrar tudo. Visuais (sticky/container)
+  // são preservados na posição original.
+  const handleAutoLayout = useCallback(() => {
+    const result = autoLayout(nodes, edges);
+    setNodes(result.nodes);
+    setEdges(result.edges);
+    // requestAnimationFrame garante que o React Flow já mediu o novo layout
+    // antes do fitView; sem isso o cálculo de bounds usa as posições antigas.
+    requestAnimationFrame(() => {
+      fitView({ duration: 500, padding: 0.2 });
+    });
+  }, [nodes, edges, setNodes, setEdges, fitView]);
+
+  useFlowShortcuts({
+    onAddSticky: handleAddSticky,
+    onAddContainer: handleAddContainer,
+    onAutoLayout: handleAutoLayout,
+  });
 
   // ── Dialog de configuração do nó (double-click) ────────────────────────
   const [configState, setConfigState] = useState<{
@@ -174,6 +199,19 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const focusedRunId = useExecutionStore((s) => s.focusedRunId);
   const stepsByNodeId = useExecutionStore((s) => s.stepsByNodeId);
+  const pinnedMap = usePinnedData(workflowId);
+  const isPinned = inspectorNodeId !== null && inspectorNodeId in pinnedMap;
+
+  const handleTogglePin = useCallback(() => {
+    if (!inspectorNodeId) return;
+    if (isPinned) {
+      pinnedDataApi.remove(workflowId, inspectorNodeId);
+      return;
+    }
+    const step = stepsByNodeId[inspectorNodeId];
+    if (!step?.output) return;
+    pinnedDataApi.set(workflowId, inspectorNodeId, step.output);
+  }, [inspectorNodeId, isPinned, workflowId, stepsByNodeId]);
 
   // Label exibido no inspector — tenta o title customizado, senão o nodeType.
   const inspectorLabel = useMemo(() => {
@@ -264,7 +302,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
   edgesRef.current = edges;
 
   return (
-    <>
+    <WorkflowIdProvider value={workflowId}>
       <ReactFlow
         nodes={nodes}
         edges={edges}
@@ -292,7 +330,11 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
           />
         )}
         <Panel position="bottom-center" className="!bottom-6">
-          <FlowToolbar onAddSticky={handleAddSticky} onAddContainer={handleAddContainer} />
+          <FlowToolbar
+            onAddSticky={handleAddSticky}
+            onAddContainer={handleAddContainer}
+            onAutoLayout={handleAutoLayout}
+          />
         </Panel>
         {nodes.length === 0 && (
           <Panel position="top-center" className="!top-24">
@@ -317,6 +359,7 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
       <NodeConfigDialog
         open={configState !== null}
         onOpenChange={(o) => !o && setConfigState(null)}
+        {...(configState?.nodeId !== undefined && { nodeId: configState.nodeId })}
         nodeType={configState?.nodeType}
         meta={configState?.meta}
         values={configState?.values ?? {}}
@@ -327,8 +370,10 @@ function Flow({ initialDefinition, onDirtyChange }: WorkflowCanvasProps) {
         onOpenChange={setInspectorOpen}
         nodeId={inspectorNodeId}
         {...(inspectorLabel !== undefined && { nodeLabel: inspectorLabel })}
+        pinned={isPinned}
+        onTogglePin={handleTogglePin}
       />
-    </>
+    </WorkflowIdProvider>
   );
 }
 

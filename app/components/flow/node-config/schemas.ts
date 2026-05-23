@@ -5,23 +5,48 @@
  * discriminadora, usamos `visibleWhen` para esconder campos irrelevantes.
  */
 import type { NodeConfigSchema } from "./types";
-
-const STRING_OR_TEMPLATE = "Aceita texto fixo ou template {{ ... }}.";
-
-const HTTP_METHODS = [
-  { value: "GET", label: "GET" },
-  { value: "POST", label: "POST" },
-  { value: "PUT", label: "PUT" },
-  { value: "PATCH", label: "PATCH" },
-  { value: "DELETE", label: "DELETE" },
-  { value: "HEAD", label: "HEAD" },
-];
+import { AiChatPanel } from "./ai-chat-panel";
+import { CodePanel } from "./code-panel";
+import { ExecuteWorkflowPanel } from "./execute-workflow-panel";
+import { HttpRequestPanel } from "./http-request-panel";
+import { IfPanel } from "./if-panel";
+import { PostgresPanel } from "./postgres-panel";
+import { SwitchPanel } from "./switch-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
-  title: "Início",
-  description: "Ponto de entrada do workflow. Não exige configuração.",
+  title: "Início (manual)",
+  description: "Disparado pelo botão Play do editor. Não exige configuração.",
   fields: [],
+};
+
+const webhook_trigger: NodeConfigSchema = {
+  title: "Webhook",
+  description:
+    "Disparado por POST em URL pública. O body JSON vira o input do run (acessível como steps[<id>].body).",
+  fields: [
+    {
+      name: "responseMode",
+      label: "Modo de resposta",
+      type: "select",
+      description:
+        "Async: responde 202 imediatamente. Sync: aguarda o run terminar e devolve o output (ou o body de um respond_to_webhook).",
+      options: [
+        { value: "async", label: "Async — 202 imediato" },
+        { value: "sync", label: "Sync — espera o run" },
+      ],
+    },
+    {
+      name: "responseTimeoutMs",
+      label: "Timeout sync (ms)",
+      type: "number",
+      min: 1000,
+      max: 120_000,
+      placeholder: "30000",
+      description: "Só usado em modo sync. Máx 120000 (2min).",
+      visibleWhen: (v) => v.responseMode === "sync",
+    },
+  ],
 };
 
 const end: NodeConfigSchema = {
@@ -44,72 +69,40 @@ const noop: NodeConfigSchema = {
 };
 
 // ── Ações ────────────────────────────────────────────────────────────────
+// Painel dedicado (HttpRequestPanel) cobre toda a UI; mantemos `fields`
+// vazio pra o renderer genérico ficar fora do caminho. A validação é feita
+// pelo próprio painel via `onError`.
 const http_request: NodeConfigSchema = {
   title: "Requisição HTTP",
-  fields: [
-    {
-      name: "url",
-      label: "URL",
-      type: "text",
-      required: true,
-      placeholder: "https://api.exemplo.com/recurso",
-      description: STRING_OR_TEMPLATE,
-    },
-    {
-      name: "method",
-      label: "Método",
-      type: "select",
-      options: HTTP_METHODS,
-    },
-    {
-      name: "headers",
-      label: "Headers",
-      type: "kv",
-      description: "Chave/valor. Valores também aceitam templates.",
-    },
-    {
-      name: "body",
-      label: "Body",
-      type: "json",
-      description: "Ignorado em GET/HEAD. Objeto vira JSON; string é enviada como está.",
-    },
-    {
-      name: "timeoutMs",
-      label: "Timeout (ms)",
-      type: "number",
-      min: 0,
-      placeholder: "10000",
-    },
-  ],
+  description: "Configuração completa: request, headers, body, autenticação e opções avançadas.",
+  fields: [],
+  customPanel: HttpRequestPanel,
 };
 
+// Painel dedicado (PostgresPanel): Monaco SQL/TS, snippets, ctx inspector.
+// Fields ficam só pra init + validação leve quando o painel não estiver montado.
 const postgres: NodeConfigSchema = {
   title: "Postgres",
+  description: "SQL parametrizado ou modo ORM (Drizzle) com autocomplete tipado.",
   fields: [
+    { name: "connectionString", label: "Connection string", type: "text", required: true },
     {
-      name: "connectionString",
-      label: "Connection string",
-      type: "text",
-      required: true,
-      placeholder: "{{ env.DATABASE_URL }}",
-      description: "Tipicamente vem de env vars do ambiente.",
+      name: "mode",
+      label: "Modo",
+      type: "select",
+      options: [
+        { value: "sql", label: "SQL" },
+        { value: "orm", label: "ORM" },
+      ],
     },
-    {
-      name: "query",
-      label: "Query SQL",
-      type: "code",
-      language: "sql",
-      required: true,
-      placeholder: "SELECT id, name FROM users WHERE org_id = $1",
-    },
-    {
-      name: "params",
-      label: "Parâmetros",
-      type: "json",
-      placeholder: '["{{ input.orgId }}"]',
-      description: "Array de valores casando com $1, $2…",
-    },
+    { name: "query", label: "Query", type: "code", language: "sql" },
+    { name: "params", label: "Params", type: "json" },
+    { name: "code", label: "Código Drizzle", type: "code", language: "js" },
+    { name: "timeoutMs", label: "Timeout (ms)", type: "number", min: 0 },
   ],
+  customPanel: PostgresPanel,
+  dialogSize: "full",
+  customPanelOwnsMeta: true,
 };
 
 const redis: NodeConfigSchema = {
@@ -139,6 +132,12 @@ const redis: NodeConfigSchema = {
         { value: "hget", label: "HGET" },
         { value: "hset", label: "HSET" },
         { value: "hdel", label: "HDEL" },
+        { value: "lpush", label: "LPUSH (lista, push à esquerda)" },
+        { value: "rpush", label: "RPUSH (lista, push à direita)" },
+        { value: "lpop", label: "LPOP" },
+        { value: "rpop", label: "RPOP" },
+        { value: "llen", label: "LLEN" },
+        { value: "lrange", label: "LRANGE (chave, start, stop)" },
       ],
     },
     {
@@ -152,24 +151,12 @@ const redis: NodeConfigSchema = {
 
 const code: NodeConfigSchema = {
   title: "Código JavaScript",
+  description: "Snippet JS executado pelo engine; o retorno vira o output do nó.",
   fields: [
-    {
-      name: "code",
-      label: "Corpo da função",
-      type: "code",
-      language: "js",
-      required: true,
-      placeholder:
-        "// `ctx` expõe { input, vars, env, steps }\nreturn { sum: (ctx.input.items ?? []).reduce((a, b) => a + b, 0) };",
-    },
-    {
-      name: "timeoutMs",
-      label: "Timeout (ms)",
-      type: "number",
-      min: 0,
-      placeholder: "2000",
-    },
+    { name: "code", label: "Corpo da função", type: "code", language: "js", required: true },
+    { name: "timeoutMs", label: "Timeout (ms)", type: "number", min: 0 },
   ],
+  customPanel: CodePanel,
 };
 
 const respond_to_webhook: NodeConfigSchema = {
@@ -195,40 +182,19 @@ const respond_to_webhook: NodeConfigSchema = {
 };
 
 // ── Lógica ───────────────────────────────────────────────────────────────
+// `if` e `switch` usam painéis dedicados (IfPanel / SwitchPanel) — a lista
+// de fields fica só pro shape lógico (init + validação do required) e como
+// fallback caso o customPanel suma. Os labels/placeholders aqui não
+// aparecem na UI quando o panel está ativo.
 const if_: NodeConfigSchema = {
   title: "Condição (IF)",
   description: "Bifurca em duas arestas rotuladas como `true` e `false`.",
   fields: [
-    {
-      name: "left",
-      label: "Lado esquerdo",
-      type: "text",
-      placeholder: "{{ steps.fetch.body.id }}",
-    },
-    {
-      name: "op",
-      label: "Operador",
-      type: "select",
-      options: [
-        { value: "eq", label: "= (eq)" },
-        { value: "neq", label: "≠ (neq)" },
-        { value: "gt", label: "> (gt)" },
-        { value: "gte", label: "≥ (gte)" },
-        { value: "lt", label: "< (lt)" },
-        { value: "lte", label: "≤ (lte)" },
-        { value: "contains", label: "contains" },
-        { value: "truthy", label: "truthy" },
-        { value: "falsy", label: "falsy" },
-      ],
-    },
-    {
-      name: "right",
-      label: "Lado direito",
-      type: "text",
-      placeholder: "valor ou {{ template }}",
-      visibleWhen: (v) => v.op !== "truthy" && v.op !== "falsy",
-    },
+    { name: "left", label: "Lado esquerdo", type: "text", required: true },
+    { name: "op", label: "Operador", type: "text" },
+    { name: "right", label: "Lado direito", type: "text" },
   ],
+  customPanel: IfPanel,
 };
 
 const switch_: NodeConfigSchema = {
@@ -237,16 +203,10 @@ const switch_: NodeConfigSchema = {
     "Avalia `value` contra cada caso e segue a aresta com `label` correspondente. Sem match, usa `default`.",
   fields: [
     { name: "value", label: "Valor a comparar", type: "text", required: true },
-    {
-      name: "cases",
-      label: "Casos",
-      type: "json",
-      placeholder:
-        '[\n  { "match": "active", "label": "ativo" },\n  { "match": "off", "label": "inativo" }\n]',
-      description: "Array de objetos `{ match, label }`.",
-    },
-    { name: "default", label: "Label default", type: "text", placeholder: "default" },
+    { name: "cases", label: "Casos", type: "json" },
+    { name: "default", label: "Label default", type: "text" },
   ],
+  customPanel: SwitchPanel,
 };
 
 const split_in_batches: NodeConfigSchema = {
@@ -287,34 +247,14 @@ const wait: NodeConfigSchema = {
 
 const execute_workflow: NodeConfigSchema = {
   title: "Sub-workflow",
+  description: "Executa outro workflow do org como sub-run síncrono.",
   fields: [
-    {
-      name: "workflowId",
-      label: "Workflow ID",
-      type: "text",
-      required: true,
-      placeholder: "uuid do workflow alvo",
-    },
-    {
-      name: "input",
-      label: "Input",
-      type: "json",
-      description: "Objeto passado como `input` do sub-run.",
-    },
-    {
-      name: "environmentId",
-      label: "Environment ID",
-      type: "text",
-      placeholder: "(opcional)",
-    },
-    {
-      name: "timeoutMs",
-      label: "Timeout (ms)",
-      type: "number",
-      min: 0,
-      placeholder: "60000 (default 60s, máx 5min)",
-    },
+    { name: "workflowId", label: "Workflow ID", type: "text", required: true },
+    { name: "input", label: "Input", type: "json" },
+    { name: "environmentId", label: "Environment ID", type: "text" },
+    { name: "timeoutMs", label: "Timeout (ms)", type: "number", min: 0 },
   ],
+  customPanel: ExecuteWorkflowPanel,
 };
 
 // ── Dados ────────────────────────────────────────────────────────────────
@@ -602,6 +542,9 @@ const aggregate: NodeConfigSchema = {
 // ── IA ───────────────────────────────────────────────────────────────────
 const ai_chat: NodeConfigSchema = {
   title: "Chat IA",
+  customPanel: AiChatPanel,
+  dialogSize: "wide",
+  // `fields` continua servindo pra inicialização/validação leve do dialog.
   fields: [
     {
       name: "provider",
@@ -791,6 +734,7 @@ const container: NodeConfigSchema = {
 // ── Registry ─────────────────────────────────────────────────────────────
 export const NODE_CONFIG_SCHEMAS: Record<string, NodeConfigSchema> = {
   start,
+  webhook_trigger,
   end,
   noop,
   http_request,
