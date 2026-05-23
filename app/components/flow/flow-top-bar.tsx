@@ -19,6 +19,8 @@ type FlowTopBarProps = {
   saveState?: SaveState;
   /** Timestamp do último save bem-sucedido (ms). */
   lastSavedAt?: number | null;
+  /** Mostra um indicador pulsante na aba "Execuções" quando há run em curso. */
+  hasActiveRun?: boolean;
 };
 
 const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
@@ -40,6 +42,7 @@ export function FlowTopBar({
   onRun,
   saveState = "idle",
   lastSavedAt,
+  hasActiveRun = false,
 }: FlowTopBarProps) {
   const dirty = saveState === "dirty";
   const saving = saveState === "saving";
@@ -88,11 +91,20 @@ export function FlowTopBar({
             </TabsTrigger>
             <TabsTrigger
               value="executions"
-              className="size-7 rounded-full p-0"
+              className="relative size-7 rounded-full p-0"
               aria-label="Execuções"
-              title="Execuções"
+              title={hasActiveRun ? "Execuções (run em curso)" : "Execuções"}
             >
               <History className="size-4" />
+              {hasActiveRun && (
+                <span
+                  aria-hidden
+                  className="pointer-events-none absolute right-0.5 top-0.5 flex size-2"
+                >
+                  <span className="absolute inline-flex size-full animate-ping rounded-full bg-sky-500 opacity-75" />
+                  <span className="relative inline-flex size-2 rounded-full bg-sky-500" />
+                </span>
+              )}
             </TabsTrigger>
           </TabsList>
         </Tabs>

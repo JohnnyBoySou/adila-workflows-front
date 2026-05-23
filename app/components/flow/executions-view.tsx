@@ -1,118 +1,511 @@
+import { useEffect, useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { motion } from "framer-motion";
-import { CheckCircle2, Clock, XCircle, type LucideIcon } from "lucide-react";
+import {
+  Ban,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Clock,
+  Loader2,
+  PlayCircle,
+  RefreshCw,
+  XCircle,
+  type LucideIcon,
+} from "lucide-react";
 
+import { Button } from "~/components/ui/button";
+import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
+import * as runsApi from "~/services/runs";
+import type { RunStatus, RunStep, WorkflowRun } from "~/services/runs";
+import { subscribeToRunEvents } from "~/services/run-events";
+import { useExecutionStore } from "~/stores/execution";
 
-type ExecutionStatus = "success" | "running" | "failed";
-
-type Execution = {
-  id: string;
-  status: ExecutionStatus;
-  trigger: string;
-  startedAt: string;
-  duration: string;
+type ExecutionsViewProps = {
+  workflowId: string;
+  /** Run recém-disparado — abre o painel de detalhe automaticamente. */
+  focusedRunId: string | null;
+  onFocusedRunHandled?: () => void;
 };
 
 const STATUS_META: Record<
-  ExecutionStatus,
+  RunStatus,
   { icon: LucideIcon; label: string; color: string; dot: string }
 > = {
+  queued: { icon: Clock, label: "Na fila", color: "text-muted-foreground", dot: "bg-muted" },
+  running: { icon: Loader2, label: "Em execução", color: "text-sky-600", dot: "bg-sky-500" },
   success: {
     icon: CheckCircle2,
     label: "Sucesso",
     color: "text-emerald-600",
     dot: "bg-emerald-500",
   },
-  running: { icon: Clock, label: "Em execução", color: "text-sky-600", dot: "bg-sky-500" },
   failed: { icon: XCircle, label: "Falhou", color: "text-rose-600", dot: "bg-rose-500" },
+  cancelled: { icon: Ban, label: "Cancelado", color: "text-amber-600", dot: "bg-amber-500" },
 };
 
-const MOCK_EXECUTIONS: Execution[] = [
-  {
-    id: "exec_01",
-    status: "success",
-    trigger: "Webhook · /api/leads",
-    startedAt: "Há 2 min",
-    duration: "1.4s",
-  },
-  {
-    id: "exec_02",
-    status: "running",
-    trigger: "Manual · lai@300f.com.br",
-    startedAt: "Há 5 min",
-    duration: "12s",
-  },
-  {
-    id: "exec_03",
-    status: "failed",
-    trigger: "Agendamento · diário 09:00",
-    startedAt: "Hoje 09:00",
-    duration: "3.1s",
-  },
-  {
-    id: "exec_04",
-    status: "success",
-    trigger: "Webhook · /api/leads",
-    startedAt: "Ontem 18:42",
-    duration: "0.9s",
-  },
-];
+const TERMINAL_STATUSES = new Set<RunStatus>(["success", "failed", "cancelled"]);
 
-export function ExecutionsView() {
+const dateFormatter = new Intl.DateTimeFormat("pt-BR", {
+  day: "2-digit",
+  month: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  second: "2-digit",
+});
+
+function formatDate(iso: string | null): string {
+  if (!iso) return "—";
+  return dateFormatter.format(new Date(iso));
+}
+
+function formatDuration(run: WorkflowRun): string {
+  if (!run.startedAt) return "—";
+  const end = run.finishedAt ? Date.parse(run.finishedAt) : Date.now();
+  const ms = end - Date.parse(run.startedAt);
+  if (ms < 1000) return `${ms}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(1)}s`;
+  const min = Math.floor(ms / 60_000);
+  const sec = Math.floor((ms % 60_000) / 1000);
+  return `${min}m ${sec}s`;
+}
+
+export function ExecutionsView({
+  workflowId,
+  focusedRunId,
+  onFocusedRunHandled,
+}: ExecutionsViewProps) {
+  const queryClient = useQueryClient();
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+
+  const runsQuery = useQuery({
+    queryKey: queryKeys.runs.list(workflowId),
+    queryFn: () => runsApi.list(workflowId, { limit: 50 }),
+    // Enquanto houver run não-terminal, polling leve como fallback ao SSE.
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      if (!data || data.length === 0) return false;
+      return data.some((r) => !TERMINAL_STATUSES.has(r.status)) ? 5000 : false;
+    },
+  });
+
+  // Run recém-disparado pelo botão Play é selecionado automaticamente.
+  useEffect(() => {
+    if (focusedRunId) {
+      setSelectedRunId(focusedRunId);
+      onFocusedRunHandled?.();
+    }
+  }, [focusedRunId, onFocusedRunHandled]);
+
+  const runs = runsQuery.data ?? [];
+  const counts = runs.reduce(
+    (acc, r) => {
+      acc[r.status] = (acc[r.status] ?? 0) + 1;
+      return acc;
+    },
+    {} as Record<RunStatus, number>,
+  );
+
   return (
     <div className="h-full overflow-y-auto bg-background">
       <div className="mx-auto max-w-5xl px-6 py-8">
-        <div className="mb-6 flex items-end justify-between">
+        <div className="mb-6 flex items-end justify-between gap-4">
           <div>
             <h2 className="font-heading text-xl font-medium text-foreground">Execuções</h2>
             <p className="mt-1 text-sm text-muted-foreground">Histórico de runs deste workflow.</p>
           </div>
           <div className="flex items-center gap-4 text-xs text-muted-foreground">
-            <span className="inline-flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-emerald-500" /> 3 sucesso
-            </span>
-            <span className="inline-flex items-center gap-1.5">
-              <span className="size-2 rounded-full bg-rose-500" /> 1 falha
-            </span>
+            {counts.success ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-emerald-500" /> {counts.success} sucesso
+              </span>
+            ) : null}
+            {counts.failed ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-rose-500" /> {counts.failed} falha
+              </span>
+            ) : null}
+            {counts.running || counts.queued ? (
+              <span className="inline-flex items-center gap-1.5">
+                <span className="size-2 rounded-full bg-sky-500" />{" "}
+                {(counts.running ?? 0) + (counts.queued ?? 0)} ativa
+              </span>
+            ) : null}
+            <Button
+              size="icon-sm"
+              variant="ghost"
+              onClick={() =>
+                queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) })
+              }
+              aria-label="Recarregar"
+              title="Recarregar"
+              disabled={runsQuery.isFetching}
+            >
+              <RefreshCw className={cn("size-4", runsQuery.isFetching && "animate-spin")} />
+            </Button>
           </div>
         </div>
 
-        <div className="overflow-hidden rounded-lg border border-border bg-card">
-          <div className="grid grid-cols-[1.4fr_2fr_1fr_1fr_auto] gap-4 border-b border-border bg-muted/40 px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            <span>Status</span>
-            <span>Disparo</span>
-            <span>Início</span>
-            <span>Duração</span>
-            <span className="w-16 text-right">ID</span>
+        {runsQuery.isPending ? (
+          <div className="grid place-items-center rounded-md border border-dashed py-16 text-sm text-muted-foreground">
+            <span className="inline-flex items-center gap-2">
+              <Loader2 className="size-4 animate-spin" /> Carregando…
+            </span>
           </div>
-          <ul>
-            {MOCK_EXECUTIONS.map((exec, i) => {
-              const meta = STATUS_META[exec.status];
-              const Icon = meta.icon;
-              return (
-                <motion.li
-                  key={exec.id}
-                  initial={{ opacity: 0, y: 8 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: i * 0.04, type: "spring", stiffness: 360, damping: 30 }}
-                  className="grid grid-cols-[1.4fr_2fr_1fr_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/30"
-                >
-                  <span className={cn("inline-flex items-center gap-2 font-medium", meta.color)}>
-                    <Icon className="size-4" />
-                    {meta.label}
-                  </span>
-                  <span className="truncate text-foreground">{exec.trigger}</span>
-                  <span className="text-muted-foreground">{exec.startedAt}</span>
-                  <span className="tabular-nums text-muted-foreground">{exec.duration}</span>
-                  <span className="w-16 text-right font-mono text-xs text-muted-foreground">
-                    {exec.id}
-                  </span>
-                </motion.li>
-              );
-            })}
-          </ul>
+        ) : runs.length === 0 ? (
+          <EmptyState />
+        ) : (
+          <div className="overflow-hidden rounded-lg border border-border bg-card">
+            <div className="grid grid-cols-[1.4fr_1.4fr_1fr_1fr_auto] gap-4 border-b border-border bg-muted/40 px-4 py-2.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              <span>Status</span>
+              <span>Início</span>
+              <span>Duração</span>
+              <span>Fim</span>
+              <span className="w-24 text-right">ID</span>
+            </div>
+            <ul>
+              {runs.map((run, i) => {
+                const meta = STATUS_META[run.status];
+                const Icon = meta.icon;
+                const isRunning = run.status === "running";
+                return (
+                  <motion.li
+                    key={run.id}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: i * 0.02, type: "spring", stiffness: 380, damping: 30 }}
+                    className={cn(
+                      "grid cursor-pointer grid-cols-[1.4fr_1.4fr_1fr_1fr_auto] items-center gap-4 border-b border-border px-4 py-3 text-sm transition-colors last:border-b-0 hover:bg-muted/30",
+                      selectedRunId === run.id && "bg-muted/50",
+                    )}
+                    onClick={() => setSelectedRunId(run.id)}
+                  >
+                    <span className={cn("inline-flex items-center gap-2 font-medium", meta.color)}>
+                      <Icon className={cn("size-4", isRunning && "animate-spin")} />
+                      {meta.label}
+                    </span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {formatDate(run.startedAt ?? run.createdAt)}
+                    </span>
+                    <span className="tabular-nums text-muted-foreground">
+                      {formatDuration(run)}
+                    </span>
+                    <span className="text-muted-foreground tabular-nums">
+                      {formatDate(run.finishedAt)}
+                    </span>
+                    <span className="w-24 truncate text-right font-mono text-xs text-muted-foreground">
+                      {run.id.slice(0, 8)}
+                    </span>
+                  </motion.li>
+                );
+              })}
+            </ul>
+          </div>
+        )}
+
+        {selectedRunId && (
+          <RunDetailPanel
+            workflowId={workflowId}
+            runId={selectedRunId}
+            onClose={() => setSelectedRunId(null)}
+          />
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  return (
+    <div className="grid place-items-center rounded-md border border-dashed py-16 text-center">
+      <div className="space-y-2">
+        <PlayCircle className="mx-auto size-6 text-muted-foreground/60" />
+        <p className="text-sm font-medium">Nenhuma execução ainda</p>
+        <p className="text-xs text-muted-foreground">
+          Clique no botão Play para disparar o workflow manualmente.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Painel de detalhe — steps em ordem, com SSE se o run ainda estiver vivo.    */
+/* -------------------------------------------------------------------------- */
+
+function RunDetailPanel({
+  workflowId,
+  runId,
+  onClose,
+}: {
+  workflowId: string;
+  runId: string;
+  onClose: () => void;
+}) {
+  const queryClient = useQueryClient();
+
+  const runQuery = useQuery({
+    queryKey: queryKeys.runs.detail(workflowId, runId),
+    queryFn: () => runsApi.get(workflowId, runId),
+  });
+
+  const stepsQuery = useQuery({
+    queryKey: queryKeys.runs.steps(workflowId, runId),
+    queryFn: () => runsApi.listSteps(workflowId, runId),
+  });
+
+  const run = runQuery.data;
+  const steps = stepsQuery.data ?? [];
+
+  // Espelha os steps deste run no store de execução para o canvas pintar
+  // os nós. Limpa ao desmontar (fechar o painel).
+  const setFocused = useExecutionStore((s) => s.setFocused);
+  const clearExecution = useExecutionStore((s) => s.clear);
+  useEffect(() => {
+    const statuses = steps.reduce<Record<string, RunStep["status"]>>((acc, s) => {
+      acc[s.nodeId] = s.status;
+      return acc;
+    }, {});
+    setFocused(runId, statuses);
+    return () => clearExecution();
+  }, [runId, steps, setFocused, clearExecution]);
+
+  const cancelMutation = useMutation({
+    mutationFn: () => runsApi.cancel(workflowId, runId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(queryKeys.runs.detail(workflowId, runId), updated);
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) });
+    },
+  });
+
+  const rerunMutation = useMutation({
+    mutationFn: () => runsApi.rerun(workflowId, runId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) });
+    },
+  });
+
+  // SSE: enquanto o run não estiver terminal, ouvimos eventos para atualizar
+  // steps e status ao vivo. Backend fecha o stream em terminais.
+  useEffect(() => {
+    if (!run) return;
+    if (TERMINAL_STATUSES.has(run.status)) return;
+
+    const sub = subscribeToRunEvents(workflowId, runId, {
+      onSnapshot: (evt) => {
+        queryClient.setQueryData(queryKeys.runs.detail(workflowId, runId), evt.run);
+        queryClient.setQueryData(queryKeys.runs.steps(workflowId, runId), evt.steps);
+      },
+      onStepStart: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.steps(workflowId, runId) });
+      },
+      onStepSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.steps(workflowId, runId) });
+      },
+      onStepFailed: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.steps(workflowId, runId) });
+      },
+      onRunSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.detail(workflowId, runId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.steps(workflowId, runId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) });
+      },
+      onRunFailed: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.detail(workflowId, runId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.steps(workflowId, runId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) });
+      },
+      onRunCancelled: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.detail(workflowId, runId) });
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(workflowId) });
+      },
+    });
+    return () => sub.close();
+  }, [workflowId, runId, run, queryClient]);
+
+  if (runQuery.isPending) {
+    return (
+      <div className="mt-6 rounded-lg border border-border bg-card p-6 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+      </div>
+    );
+  }
+
+  if (!run) return null;
+
+  const meta = STATUS_META[run.status];
+  const isTerminal = TERMINAL_STATUSES.has(run.status);
+
+  return (
+    <div className="mt-6 overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-center justify-between border-b border-border px-4 py-3">
+        <div className="flex items-center gap-3">
+          <span className={cn("inline-flex items-center gap-2 font-medium", meta.color)}>
+            <meta.icon className={cn("size-4", run.status === "running" && "animate-spin")} />
+            {meta.label}
+          </span>
+          <span className="font-mono text-xs text-muted-foreground">{run.id.slice(0, 12)}</span>
+        </div>
+        <div className="flex items-center gap-2">
+          {!isTerminal && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => cancelMutation.mutate()}
+              disabled={cancelMutation.isPending}
+            >
+              <Ban className="size-4" /> Cancelar
+            </Button>
+          )}
+          {isTerminal && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => rerunMutation.mutate()}
+              disabled={rerunMutation.isPending}
+            >
+              <RefreshCw className={cn("size-4", rerunMutation.isPending && "animate-spin")} />{" "}
+              Reexecutar
+            </Button>
+          )}
+          <Button size="sm" variant="ghost" onClick={onClose}>
+            Fechar
+          </Button>
         </div>
       </div>
+
+      <div className="grid grid-cols-3 gap-4 border-b border-border bg-muted/30 px-4 py-3 text-xs">
+        <Field label="Criado">{formatDate(run.createdAt)}</Field>
+        <Field label="Início">{formatDate(run.startedAt)}</Field>
+        <Field label="Fim">{formatDate(run.finishedAt)}</Field>
+      </div>
+
+      <div className="space-y-3 p-4">
+        {(run.input || run.output) && (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {run.input && <JsonBlock label="Input do run" data={run.input} />}
+            {run.output && <JsonBlock label="Output do run" data={run.output} />}
+          </div>
+        )}
+
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Steps ({steps.length})
+        </h4>
+        {steps.length === 0 ? (
+          <p className="text-xs text-muted-foreground">Aguardando primeiro step…</p>
+        ) : (
+          <ol className="space-y-1.5">
+            {[...steps]
+              .toSorted((a, b) => a.index - b.index)
+              .map((step) => (
+                <StepRow key={step.id} step={step} />
+              ))}
+          </ol>
+        )}
+
+        {run.error && (
+          <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs">
+            <p className="font-medium text-destructive">Erro</p>
+            <pre className="mt-1 overflow-x-auto whitespace-pre-wrap break-words text-destructive/90">
+              {JSON.stringify(run.error, null, 2)}
+            </pre>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-0.5">
+      <dt className="text-muted-foreground">{label}</dt>
+      <dd className="font-medium tabular-nums">{children}</dd>
+    </div>
+  );
+}
+
+function StepRow({ step }: { step: RunStep }) {
+  const statusKey: RunStatus =
+    step.status === "running" ? "running" : step.status === "success" ? "success" : "failed";
+  const meta = STATUS_META[statusKey];
+  const Icon = meta.icon;
+  const [expanded, setExpanded] = useState(false);
+  const hasPayload = step.output !== null || step.error !== null;
+  const ChevronIcon = expanded ? ChevronDown : ChevronRight;
+
+  return (
+    <li className="rounded-md border border-border bg-background text-sm">
+      <button
+        type="button"
+        onClick={() => hasPayload && setExpanded((v) => !v)}
+        disabled={!hasPayload}
+        className={cn(
+          "flex w-full items-center gap-3 px-3 py-2 text-left",
+          hasPayload && "cursor-pointer hover:bg-muted/40",
+        )}
+      >
+        <span
+          className={cn(
+            "inline-flex size-5 shrink-0 items-center justify-center rounded-full text-[10px] font-semibold tabular-nums text-white",
+            meta.dot,
+          )}
+        >
+          {step.index + 1}
+        </span>
+        <span className={cn("inline-flex items-center gap-1.5", meta.color)}>
+          <Icon className={cn("size-3.5", step.status === "running" && "animate-spin")} />
+        </span>
+        <span className="truncate font-mono text-xs">{step.nodeType}</span>
+        <span className="ml-auto tabular-nums text-xs text-muted-foreground">
+          {step.durationMs !== null ? `${step.durationMs}ms` : "—"}
+        </span>
+        {hasPayload && <ChevronIcon className="size-3.5 text-muted-foreground" />}
+      </button>
+
+      {expanded && hasPayload && (
+        <div className="space-y-2 border-t border-border bg-muted/20 p-3">
+          {step.output && <JsonBlock label="Output" data={step.output} />}
+          {step.error && <JsonBlock label="Erro" data={step.error} tone="error" />}
+        </div>
+      )}
+    </li>
+  );
+}
+
+function JsonBlock({
+  label,
+  data,
+  tone = "default",
+}: {
+  label: string;
+  data: Record<string, unknown>;
+  tone?: "default" | "error";
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border bg-background px-3 py-2 text-xs",
+        tone === "error" ? "border-destructive/40 bg-destructive/5" : "border-border",
+      )}
+    >
+      <p
+        className={cn(
+          "mb-1 font-medium",
+          tone === "error" ? "text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {label}
+      </p>
+      <pre
+        className={cn(
+          "max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed",
+          tone === "error" && "text-destructive/90",
+        )}
+      >
+        {JSON.stringify(data, null, 2)}
+      </pre>
     </div>
   );
 }

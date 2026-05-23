@@ -11,6 +11,13 @@ import {
 
 import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { cn } from "~/lib/utils";
+import { useExecutionStore, type NodeExecutionStatus } from "~/stores/execution";
+
+const EXECUTION_RING: Record<NodeExecutionStatus, string> = {
+  running: "ring-2 ring-sky-500 ring-offset-1 ring-offset-background",
+  success: "ring-2 ring-emerald-500 ring-offset-1 ring-offset-background",
+  failed: "ring-2 ring-rose-500 ring-offset-1 ring-offset-background",
+};
 
 export type WorkflowNodeVariant = "trigger" | "action" | "condition" | "end" | "data" | "ai";
 
@@ -40,13 +47,22 @@ const VARIANT_META: Record<
   ai: { icon: Sparkles, color: "text-fuchsia-500", chip: "bg-fuchsia-500" },
 };
 
-function WorkflowNodeComponent({ data, selected }: NodeProps<WorkflowNode>) {
+function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) {
   const variant = data.variant ?? "action";
   const meta = VARIANT_META[variant];
   const Icon = meta.icon;
+  // Seletor fino — só este nó re-renderiza quando o status dele muda.
+  const executionStatus = useExecutionStore((s) => s.statusByNodeId[id]);
+  const executionRing = executionStatus ? EXECUTION_RING[executionStatus] : null;
 
   return (
-    <Card className={cn("w-56 gap-2 py-3 transition-shadow", selected && "ring-2 ring-ring")}>
+    <Card
+      className={cn(
+        "w-56 gap-2 py-3 transition-shadow",
+        selected && "ring-2 ring-ring",
+        executionRing,
+      )}
+    >
       <Handle
         type="target"
         position={Position.Top}

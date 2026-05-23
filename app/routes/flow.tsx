@@ -10,6 +10,8 @@ import { WorkflowInfoDialog, type WorkflowInfo } from "~/components/flow/workflo
 import { ExecutionsView } from "~/components/flow/executions-view";
 import { Button } from "~/components/ui/button";
 import * as workflowsApi from "~/services/workflows";
+import * as runsApi from "~/services/runs";
+import type { RunStatus } from "~/services/runs";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
 
@@ -22,6 +24,8 @@ export function meta({}: Route.MetaArgs) {
 
 const AUTO_SAVE_DEBOUNCE_MS = 30_000;
 
+const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["success", "failed", "cancelled"]);
+
 export default function FlowRoute() {
   const { id } = useParams<{ id: string }>();
 
@@ -31,6 +35,7 @@ export default function FlowRoute() {
 
   const [tab, setTab] = useState<FlowTab>("editor");
   const [infoOpen, setInfoOpen] = useState(false);
+  const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const workflowQuery = useQuery({
@@ -120,6 +125,40 @@ export default function FlowRoute() {
     return () => window.removeEventListener("beforeunload", handler);
   }, [saveState]);
 
+  // ── Lista de runs (mesma query do ExecutionsView — cache compartilhado) ─
+  // Usada aqui apenas para derivar `hasActiveRun` e pulsar o ícone da aba.
+  const runsQuery = useQuery({
+    queryKey: queryKeys.runs.list(id ?? ""),
+    queryFn: () => runsApi.list(id!, { limit: 50 }),
+    enabled: !!id,
+    refetchInterval: (q) => {
+      const data = q.state.data;
+      if (!data || data.length === 0) return false;
+      return data.some((r) => !TERMINAL_RUN_STATUSES.has(r.status)) ? 5000 : false;
+    },
+  });
+  const hasActiveRun = (runsQuery.data ?? []).some(
+    (r) => !TERMINAL_RUN_STATUSES.has(r.status),
+  );
+
+  // ── Run: dispara o workflow e troca pra aba de execuções ───────────────
+  const runMutation = useMutation({
+    mutationFn: () => workflowsApi.run(id!),
+    onSuccess: (res) => {
+      setFocusedRunId(res.runId);
+      setTab("executions");
+      queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(id!) });
+    },
+  });
+
+  const handleRun = useCallback(() => {
+    if (!id) return;
+    // Garante que o estado atual do canvas foi persistido antes de disparar
+    // — caso contrário o worker pega a definition antiga.
+    if (saveState === "dirty") flushSave();
+    runMutation.mutate();
+  }, [id, saveState, flushSave, runMutation]);
+
   // Persistir mudanças de info (nome/descrição).
   const handleInfoSave = useCallback(
     (next: WorkflowInfo) => {
@@ -166,15 +205,21 @@ export default function FlowRoute() {
           )}
         </div>
         <div className={cn("absolute inset-0", tab === "executions" ? "block" : "hidden")}>
-          <ExecutionsView />
+          <ExecutionsView
+            workflowId={workflow.id}
+            focusedRunId={focusedRunId}
+            onFocusedRunHandled={() => setFocusedRunId(null)}
+          />
         </div>
         <FlowTopBar
           tab={tab}
           onTabChange={setTab}
           onInfoClick={() => setInfoOpen(true)}
           onSave={flushSave}
+          onRun={handleRun}
           saveState={saveState}
           lastSavedAt={lastSavedAt}
+          hasActiveRun={hasActiveRun}
         />
       </div>
 
