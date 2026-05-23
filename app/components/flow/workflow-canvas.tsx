@@ -1,4 +1,12 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
+import {
+  forwardRef,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -21,9 +29,14 @@ import { FlowToolbar } from "./flow-toolbar";
 import { NodeLibraryDrawer } from "./node-library-drawer";
 import type { NodeLibraryEntry } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
+import { NodeConfigDialog } from "./node-config-dialog";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
 import { Button } from "~/components/ui/button";
+
+// Campos de `node.data` que pertencem ao editor, não ao engine — não
+// devem aparecer no dialog de config nem ser sobrescritos por ele.
+const EDITOR_META_KEYS = new Set(["title", "description", "variant", "nodeType"]);
 
 export type WorkflowCanvasHandle = {
   /** Snapshot do canvas no shape persistido — chamado no save. */

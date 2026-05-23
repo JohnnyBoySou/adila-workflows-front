@@ -20,7 +20,7 @@ export function meta({}: Route.MetaArgs) {
   ];
 }
 
-const AUTO_SAVE_DEBOUNCE_MS = 1500;
+const AUTO_SAVE_DEBOUNCE_MS = 30_000;
 
 export default function FlowRoute() {
   const { id } = useParams<{ id: string }>();
@@ -130,6 +130,7 @@ export default function FlowRoute() {
         .then((wf) => {
           queryClient.setQueryData(queryKeys.workflows.detail(id), wf);
           queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+          return wf;
         })
         .catch(() => {
           /* erro silenciado por ora — dialog mostra falha quando tiver toast */

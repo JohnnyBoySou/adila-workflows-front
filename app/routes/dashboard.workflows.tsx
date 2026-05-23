@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router";
-import { keepPreviousData, useQuery } from "@tanstack/react-query";
-import { FolderPlus, Loader2, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Copy, FolderPlus, Loader2, MoreHorizontal, Pause, Play, Plus } from "lucide-react";
 
 import type { Route } from "./+types/dashboard.workflows";
 import type { DashboardHandle } from "./dashboard";
@@ -13,6 +13,8 @@ import { queryKeys } from "~/lib/query-keys";
 
 import { FolderCreateDialog } from "~/components/folder-create-dialog";
 import { WorkflowCreateDialog } from "~/components/workflow-create-dialog";
+import { WorkflowRenameDialog } from "~/components/workflow-rename-dialog";
+import { WorkflowMoveDialog } from "~/components/workflow-move-dialog";
 import { Badge } from "~/components/ui/badge";
 import {
   Breadcrumb,
@@ -107,7 +109,9 @@ function useFolderPath(folderId: string | null): Folder[] {
       const chain: Folder[] = [];
       let cursor: string | null = folderId;
       while (cursor) {
-        const f = await foldersApi.get(cursor);
+        const idAtStep = cursor;
+        // eslint-disable-next-line no-await-in-loop -- cada pasta depende do parentId obtido no passo anterior
+        const f = await foldersApi.get(idAtStep);
         chain.unshift(f);
         cursor = f.parentId;
       }
@@ -311,16 +315,25 @@ export default function WorkflowsListRoute() {
 /* Paginação                                                                   */
 /* -------------------------------------------------------------------------- */
 
-function buildPageRange(current: number, total: number): (number | "…")[] {
-  if (total <= 7) return Array.from({ length: total }, (_, i) => i + 1);
+type PagerSlot = { kind: "page"; page: number } | { kind: "ellipsis"; uid: string };
+
+function buildPageRange(current: number, total: number): PagerSlot[] {
+  if (total <= 7) {
+    return Array.from({ length: total }, (_, i) => ({
+      kind: "page" as const,
+      page: i + 1,
+    }));
+  }
   const around = new Set<number>([1, total, current - 1, current, current + 1]);
   const sorted = [...around].filter((n) => n >= 1 && n <= total).toSorted((a, b) => a - b);
-  const out: (number | "…")[] = [];
+  const out: PagerSlot[] = [];
   for (let i = 0; i < sorted.length; i++) {
     const n = sorted[i]!;
-    out.push(n);
+    out.push({ kind: "page", page: n });
     const next = sorted[i + 1];
-    if (next !== undefined && next > n + 1) out.push("…");
+    if (next !== undefined && next > n + 1) {
+      out.push({ kind: "ellipsis", uid: `${n}-${next}` });
+    }
   }
   return out;
 }
@@ -354,22 +367,22 @@ function PagerBar({
           />
         </PaginationItem>
 
-        {range.map((token, i) =>
-          token === "…" ? (
-            <PaginationItem key={`e-${i}`}>
+        {range.map((slot) =>
+          slot.kind === "ellipsis" ? (
+            <PaginationItem key={`ellipsis-${slot.uid}`}>
               <PaginationEllipsis />
             </PaginationItem>
           ) : (
-            <PaginationItem key={token}>
+            <PaginationItem key={slot.page}>
               <PaginationLink
                 href="#"
-                isActive={token === page}
+                isActive={slot.page === page}
                 onClick={(e) => {
                   e.preventDefault();
-                  onChange(token);
+                  onChange(slot.page);
                 }}
               >
-                {token}
+                {slot.page}
               </PaginationLink>
             </PaginationItem>
           ),
@@ -389,6 +402,53 @@ function PagerBar({
         </PaginationItem>
       </PaginationContent>
     </Pagination>
+  );
+}
+
+function WorkflowActionsMenu({
+  status,
+  duplicating,
+  onDuplicate,
+  onRename,
+  onMove,
+}: {
+  status: WorkflowStatus;
+  duplicating: boolean;
+  onDuplicate: () => void;
+  onRename: () => void;
+  onMove: () => void;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon-sm" aria-label="Ações" className="bg-background/80">
+          <MoreHorizontal className="size-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end" className="w-44">
+        <DropdownMenuItem>
+          {status === "active" ? (
+            <>
+              <Pause className="size-4" /> Pausar
+            </>
+          ) : (
+            <>
+              <Play className="size-4" /> Ativar
+            </>
+          )}
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onDuplicate} disabled={duplicating}>
+          {duplicating ? <Loader2 className="size-4 animate-spin" /> : <Copy className="size-4" />}
+          Duplicar
+        </DropdownMenuItem>
+        <DropdownMenuItem onSelect={onRename}>Renomear</DropdownMenuItem>
+        <DropdownMenuItem onSelect={onMove}>Mover para…</DropdownMenuItem>
+        <DropdownMenuSeparator />
+        <DropdownMenuItem className="text-destructive focus:text-destructive">
+          Excluir
+        </DropdownMenuItem>
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -435,6 +495,27 @@ function FolderCard({ folder, onOpen }: { folder: Folder; onOpen: () => void }) 
 
 function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen: () => void }) {
   const meta = statusMeta[workflow.status];
+  const queryClient = useQueryClient();
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [moveOpen, setMoveOpen] = useState(false);
+
+  // Duplicar: precisamos da `definition` (não vem no `WorkflowSummary`), então
+  // GET completo + POST. O backend gera novo id; nome ganha prefixo "Cópia de".
+  const duplicateMutation = useMutation({
+    mutationFn: async () => {
+      const full = await workflowsApi.get(workflow.id);
+      return workflowsApi.create({
+        name: `Cópia de ${workflow.name}`,
+        ...(full.description !== null && { description: full.description }),
+        folderId: workflow.folderId,
+        definition: full.definition,
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.workflows.all });
+    },
+  });
+
   return (
     <Card className="group relative gap-0 overflow-hidden p-0 transition-colors hover:bg-muted/40">
       <button
@@ -474,13 +555,32 @@ function WorkflowCard({ workflow, onOpen }: { workflow: WorkflowSummary; onOpen:
         </dl>
       </button>
       <div className="absolute top-2 right-2 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-        <ActionsMenu kind="workflow" status={workflow.status} />
+        <WorkflowActionsMenu
+          status={workflow.status}
+          duplicating={duplicateMutation.isPending}
+          onDuplicate={() => duplicateMutation.mutate()}
+          onRename={() => setRenameOpen(true)}
+          onMove={() => setMoveOpen(true)}
+        />
       </div>
+
+      <WorkflowRenameDialog
+        open={renameOpen}
+        onOpenChange={setRenameOpen}
+        workflowId={workflow.id}
+        currentName={workflow.name}
+      />
+      <WorkflowMoveDialog
+        open={moveOpen}
+        onOpenChange={setMoveOpen}
+        workflowId={workflow.id}
+        currentFolderId={workflow.folderId}
+      />
     </Card>
   );
 }
 
-function ActionsMenu({ kind, status }: { kind: "folder" | "workflow"; status?: WorkflowStatus }) {
+function ActionsMenu({ kind }: { kind: "folder" }) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -489,28 +589,7 @@ function ActionsMenu({ kind, status }: { kind: "folder" | "workflow"; status?: W
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-44">
-        {kind === "workflow" ? (
-          <>
-            <DropdownMenuItem>
-              {status === "active" ? (
-                <>
-                  <Pause className="size-4" /> Pausar
-                </>
-              ) : (
-                <>
-                  <Play className="size-4" /> Ativar
-                </>
-              )}
-            </DropdownMenuItem>
-            <DropdownMenuItem>Duplicar</DropdownMenuItem>
-            <DropdownMenuItem>Renomear</DropdownMenuItem>
-            <DropdownMenuItem>Mover para…</DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem className="text-destructive focus:text-destructive">
-              Excluir
-            </DropdownMenuItem>
-          </>
-        ) : (
+        {kind === "folder" && (
           <>
             <DropdownMenuItem>Renomear</DropdownMenuItem>
             <DropdownMenuItem>Mover para…</DropdownMenuItem>
