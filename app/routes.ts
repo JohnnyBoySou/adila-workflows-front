@@ -7,6 +7,7 @@ export default [
     index("routes/dashboard.index.tsx"),
     route("workflows", "routes/dashboard.workflows.tsx"),
     route("settings", "routes/dashboard.settings.tsx"),
+    route("users", "routes/dashboard.users.tsx"),
     route("profile", "routes/dashboard.profile.tsx"),
   ]),
   route("flow/:id", "routes/flow.tsx"),

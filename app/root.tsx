@@ -11,13 +11,13 @@ import {
 
 import { QueryClientProvider } from "@tanstack/react-query";
 
+import { ThemeScript } from "~/components/theme/theme-script";
+import { TooltipProvider } from "~/components/ui/tooltip";
+import { queryClient } from "~/lib/query-client";
+import { onUnauthorized } from "~/services";
+import { useApplyTheme } from "~/stores/theme";
 import type { Route } from "./+types/root";
 import "./app.css";
-import { onUnauthorized } from "~/services";
-import { queryClient } from "~/lib/query-client";
-import { TooltipProvider } from "~/components/ui/tooltip";
-import { ThemeScript } from "~/components/theme-script";
-import { useApplyTheme } from "~/stores/theme";
 
 export const links: Route.LinksFunction = () => [];
 

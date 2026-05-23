@@ -1,15 +1,15 @@
-import { useEffect, useState } from "react";
 import { Loader2 } from "lucide-react";
+import { useEffect, useState } from "react";
 
 import type { Route } from "./+types/dashboard.settings";
 import type { DashboardHandle } from "./dashboard";
 
+import { ThemeSwitcher } from "~/components/theme/theme-switcher";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Separator } from "~/components/ui/separator";
-import { ThemeSwitcher } from "~/components/theme-switcher";
 import { organization, useActiveOrganization } from "~/lib/auth-client";
 
 export function meta({}: Route.MetaArgs) {

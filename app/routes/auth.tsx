@@ -1,28 +1,41 @@
-import { useState } from "react";
-import { useNavigate } from "react-router";
-import { Workflow } from "lucide-react";
 import { motion } from "framer-motion";
+import { Workflow } from "lucide-react";
+import { useState } from "react";
+import { useNavigate, useSearchParams } from "react-router";
 
-import type { Route } from "./+types/auth";
+import {
+  InvitationAutoAccept,
+  InvitationGuestBanner,
+} from "~/components/auth/invitation-handler";
+import { PasswordInput } from "~/components/auth/password-input";
+import { acceptOrganizationInvitation } from "~/lib/accept-invitation";
+import { PasswordStrength } from "~/components/auth/password-strength";
 import { Button } from "~/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/components/ui/card";
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { PasswordInput } from "~/components/password-input";
-import { PasswordStrength } from "~/components/password-strength";
-import { authClient } from "~/lib/auth-client";
+import { authClient, useSession } from "~/lib/auth-client";
 import { translateAuthError } from "~/lib/auth-errors";
+import type { Route } from "./+types/auth";
 
 export function meta({}: Route.MetaArgs) {
   return [{ title: "Entrar — Workflows" }, { name: "description", content: "Acesse sua conta" }];
 }
 
 export default function AuthRoute() {
+  const [searchParams] = useSearchParams();
+  const invitationId = searchParams.get("invitation")?.trim() || null;
+  const { data: session, isPending: sessionPending } = useSession();
+  const showGuestInviteBanner = !!invitationId && !sessionPending && !session?.user;
+
   return (
     <main className="grid min-h-dvh w-full lg:grid-cols-2">
       <section className="flex items-center justify-center p-6 sm:p-10">
         <div className="w-full max-w-sm space-y-6">
+          {invitationId && <InvitationAutoAccept invitationId={invitationId} />}
+          {showGuestInviteBanner && <InvitationGuestBanner />}
+
           <div className="flex items-center gap-2">
             <div className="grid size-8 place-items-center rounded-md bg-primary text-primary-foreground">
               <Workflow className="size-4" />
@@ -37,10 +50,10 @@ export default function AuthRoute() {
             </TabsList>
 
             <TabsContent value="login" className="mt-4">
-              <LoginCard />
+              <LoginCard invitationId={invitationId} />
             </TabsContent>
             <TabsContent value="signup" className="mt-4">
-              <SignupCard />
+              <SignupCard invitationId={invitationId} />
             </TabsContent>
           </Tabs>
 
@@ -95,7 +108,7 @@ export default function AuthRoute() {
   );
 }
 
-function LoginCard() {
+function LoginCard({ invitationId }: { invitationId: string | null }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,7 +130,8 @@ function LoginCard() {
       setLoading(false);
       return;
     }
-    navigate("/dashboard", { replace: true });
+    const redirectError = await finishAuthRedirect(navigate, invitationId);
+    if (redirectError) setError(redirectError);
     setLoading(false);
   }
 
@@ -171,7 +185,7 @@ function LoginCard() {
   );
 }
 
-function SignupCard() {
+function SignupCard({ invitationId }: { invitationId: string | null }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -192,11 +206,12 @@ function SignupCard() {
       password,
     });
     if (authError) {
-      setError(authError.message ?? "Falha ao criar conta");
+      setError(translateAuthError(authError, "Falha ao criar conta"));
       setLoading(false);
       return;
     }
-    navigate("/dashboard", { replace: true });
+    const redirectError = await finishAuthRedirect(navigate, invitationId);
+    if (redirectError) setError(redirectError);
     setLoading(false);
   }
 
@@ -248,4 +263,17 @@ function SignupCard() {
       </CardContent>
     </Card>
   );
+}
+
+/** Após login/cadastro, aceita convite pendente (se houver) e vai ao dashboard. */
+async function finishAuthRedirect(
+  navigate: ReturnType<typeof useNavigate>,
+  invitationId: string | null,
+): Promise<string | null> {
+  if (invitationId) {
+    const result = await acceptOrganizationInvitation(invitationId);
+    if (!result.ok) return result.message;
+  }
+  navigate("/dashboard", { replace: true });
+  return null;
 }

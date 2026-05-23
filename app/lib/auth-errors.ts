@@ -46,6 +46,15 @@ const MESSAGES: Record<string, string> = {
   // Rate limit / genéricos
   TOO_MANY_REQUESTS: "Muitas tentativas. Tente novamente em alguns minutos.",
   rate_limited: "Muitas tentativas. Tente novamente em alguns minutos.",
+
+  // Organização / convites
+  INVITATION_NOT_FOUND: "Convite inválido ou expirado.",
+  YOU_ARE_NOT_THE_RECIPIENT_OF_THE_INVITATION:
+    "Este convite foi enviado para outro e-mail. Entre com a conta correta.",
+  EMAIL_VERIFICATION_REQUIRED_BEFORE_ACCEPTING_OR_REJECTING_INVITATION:
+    "Confirme seu e-mail antes de aceitar o convite.",
+  USER_IS_ALREADY_A_MEMBER_OF_THIS_ORGANIZATION: "Você já faz parte desta organização.",
+  ORGANIZATION_MEMBERSHIP_LIMIT_REACHED: "A organização atingiu o limite de membros.",
 };
 
 // Fallback por status quando não temos código.

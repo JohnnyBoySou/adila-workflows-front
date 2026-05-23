@@ -1,5 +1,3 @@
-import { useEffect, useState } from "react";
-import { Link, useNavigate, useSearchParams } from "react-router";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Copy,
@@ -15,21 +13,21 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Link, useNavigate, useSearchParams } from "react-router";
 
+import { queryKeys } from "~/lib/query-keys";
+import type { Folder } from "~/services/folders";
+import * as foldersApi from "~/services/folders";
+import type { WorkflowStatus, WorkflowSummary } from "~/services/workflows";
+import * as workflowsApi from "~/services/workflows";
 import type { Route } from "./+types/dashboard.workflows";
 import type { DashboardHandle } from "./dashboard";
-import * as foldersApi from "~/services/folders";
-import * as workflowsApi from "~/services/workflows";
-import type { Folder } from "~/services/folders";
-import type { WorkflowStatus, WorkflowSummary } from "~/services/workflows";
-import { queryKeys } from "~/lib/query-keys";
 
 import { ConfirmDialog } from "~/components/confirm-dialog";
-import { FolderCreateDialog } from "~/components/folder-create-dialog";
-import { N8nImportDialog } from "~/components/n8n-import-dialog";
-import { WorkflowCreateDialog } from "~/components/workflow-create-dialog";
-import { WorkflowRenameDialog } from "~/components/workflow-rename-dialog";
-import { WorkflowMoveDialog } from "~/components/workflow-move-dialog";
+import { FolderCreateDialog } from "~/components/folder/folder-create-dialog";
+import { FolderIcon } from "~/components/folder/folder-icon";
+import { N8nImportDialog } from "~/components/n8n/n8n-import-dialog";
 import { Badge } from "~/components/ui/badge";
 import {
   Breadcrumb,
@@ -41,14 +39,6 @@ import {
 } from "~/components/ui/breadcrumb";
 import { Button } from "~/components/ui/button";
 import { Card } from "~/components/ui/card";
-import { Input } from "~/components/ui/input";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "~/components/ui/select";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -56,6 +46,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "~/components/ui/dropdown-menu";
+import { Input } from "~/components/ui/input";
 import {
   Pagination,
   PaginationContent,
@@ -66,6 +57,13 @@ import {
   PaginationPrevious,
 } from "~/components/ui/pagination";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
+import {
   Table,
   TableBody,
   TableCell,
@@ -73,7 +71,9 @@ import {
   TableHeader,
   TableRow,
 } from "~/components/ui/table";
-import { FolderIcon } from "~/components/folder-icon";
+import { WorkflowCreateDialog } from "~/components/workflow/workflow-create-dialog";
+import { WorkflowMoveDialog } from "~/components/workflow/workflow-move-dialog";
+import { WorkflowRenameDialog } from "~/components/workflow/workflow-rename-dialog";
 import { cn } from "~/lib/utils";
 
 type ViewMode = "grid" | "table";

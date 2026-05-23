@@ -11,6 +11,7 @@ import {
   ReactFlow,
   ReactFlowProvider,
   Background,
+  MarkerType,
   MiniMap,
   Panel,
   addEdge,
@@ -18,6 +19,7 @@ import {
   useEdgesState,
   useReactFlow,
   type Connection,
+  type DefaultEdgeOptions,
   type Edge,
   type Node,
 } from "@xyflow/react";
@@ -104,13 +106,55 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
   const miniMapVisible = useFlowStore((s) => s.miniMapVisible);
   const libraryOpen = useFlowStore((s) => s.libraryOpen);
   const backgroundVariant = useFlowStore((s) => s.backgroundVariant);
+  const edgeStyle = useFlowStore((s) => s.edgeStyle);
   const setLibraryOpen = useFlowStore((s) => s.setLibraryOpen);
 
   const { screenToFlowPosition, fitView } = useReactFlow();
 
+  // Opções aplicadas a novas edges (criadas via conexão de handles). Edges
+  // existentes herdam via style override no `edges` derivado abaixo.
+  const defaultEdgeOptions = useMemo<DefaultEdgeOptions>(
+    () => ({
+      type: edgeStyle.type,
+      animated: edgeStyle.animated,
+      style: {
+        stroke: edgeStyle.color,
+        strokeWidth: edgeStyle.thickness,
+        ...(edgeStyle.dashed ? { strokeDasharray: "6 4" } : {}),
+      },
+      ...(edgeStyle.arrow
+        ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.color } }
+        : {}),
+    }),
+    [edgeStyle],
+  );
+
+  // Aplica o estilo do store por cima dos campos individuais da edge —
+  // edges hidratadas do backend não carregam style, então isso pinta tudo
+  // com a preferência atual sem mutar a definition persistida.
+  const styledEdges = useMemo<Edge[]>(
+    () =>
+      edges.map((e) => ({
+        ...e,
+        type: e.type ?? edgeStyle.type,
+        animated: e.animated ?? edgeStyle.animated,
+        style: {
+          stroke: edgeStyle.color,
+          strokeWidth: edgeStyle.thickness,
+          ...(edgeStyle.dashed ? { strokeDasharray: "6 4" } : {}),
+          ...(e.style ?? {}),
+        },
+        ...(edgeStyle.arrow && !e.markerEnd
+          ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.color } }
+          : {}),
+      })),
+    [edges, edgeStyle],
+  );
+
   const onConnect = useCallback(
-    (params: Connection) => setEdges((eds) => addEdge({ ...params, animated: true }, eds)),
-    [setEdges],
+    (params: Connection) =>
+      setEdges((eds) => addEdge({ ...params, animated: edgeStyle.animated }, eds)),
+    [setEdges, edgeStyle.animated],
   );
 
   const centerFlowPosition = useCallback(() => {
@@ -305,8 +349,11 @@ function Flow({ workflowId, initialDefinition, onDirtyChange }: WorkflowCanvasPr
     <WorkflowIdProvider value={workflowId}>
       <ReactFlow
         nodes={nodes}
-        edges={edges}
+        edges={styledEdges}
         nodeTypes={nodeTypes}
+        defaultEdgeOptions={defaultEdgeOptions}
+        connectionLineType={edgeStyle.type}
+        connectionLineStyle={{ stroke: edgeStyle.color, strokeWidth: edgeStyle.thickness }}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}

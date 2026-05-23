@@ -43,4 +43,10 @@ export const queryKeys = {
     all: ["triggers"] as const,
     list: (workflowId: string) => ["triggers", "list", workflowId] as const,
   },
+  organization: {
+    all: ["organization"] as const,
+    members: (organizationId: string) => ["organization", "members", organizationId] as const,
+    invitations: (organizationId: string) =>
+      ["organization", "invitations", organizationId] as const,
+  },
 } as const;

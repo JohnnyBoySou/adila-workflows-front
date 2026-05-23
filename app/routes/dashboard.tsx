@@ -1,6 +1,6 @@
 import { Outlet, useMatches } from "react-router";
 
-import { AppShell, type Crumb } from "~/components/app-shell";
+import { AppShell, type Crumb } from "~/components/sidebar/app-shell";
 
 /**
  * Tipo do `handle` que cada rota filha pode exportar para participar

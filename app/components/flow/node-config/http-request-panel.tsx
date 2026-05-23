@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "~/components/ui/select";
+import { Sections, type SectionItem } from "~/components/ui/sections";
 import { cn } from "~/lib/utils";
 
 import type { CustomPanelProps } from "./types";
@@ -73,15 +74,15 @@ interface RetryValue {
 const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
 const NO_BODY_METHODS = new Set(["GET", "HEAD"]);
 
-const SECTIONS = [
+const BASE_SECTIONS = [
   { id: "request", label: "Request", icon: Globe },
   { id: "headers", label: "Headers", icon: ListChecks },
   { id: "body", label: "Body", icon: ListChecks },
   { id: "auth", label: "Autenticação", icon: KeyRound },
   { id: "advanced", label: "Avançado", icon: Settings2 },
-] as const;
+] as const satisfies ReadonlyArray<SectionItem>;
 
-type SectionId = (typeof SECTIONS)[number]["id"];
+type SectionId = (typeof BASE_SECTIONS)[number]["id"];
 
 /* -------------------------------------------------------------------------- */
 /* Helpers de leitura/escrita                                                  */
@@ -158,76 +159,46 @@ export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps
     onChange({ auth: next });
   }
 
-  return (
-    <div className="flex min-h-[460px]">
-      {/* Sidebar */}
-      <nav
-        aria-label="Seções de configuração HTTP"
-        className="flex w-44 shrink-0 flex-col gap-0.5 border-r border-border pr-2"
-      >
-        {SECTIONS.map((s) => {
-          const Icon = s.icon;
-          const active = section === s.id;
-          const hidden = s.id === "body" && NO_BODY_METHODS.has(method);
-          return (
-            <button
-              key={s.id}
-              type="button"
-              onClick={() => setSection(s.id)}
-              className={cn(
-                "inline-flex items-center gap-2 rounded-md px-2.5 py-1.5 text-left text-sm transition-colors",
-                active
-                  ? "bg-muted font-medium text-foreground"
-                  : "text-muted-foreground hover:bg-muted/50 hover:text-foreground",
-                hidden && "opacity-50",
-              )}
-              title={hidden ? `${method} não envia body` : undefined}
-            >
-              <Icon className="size-4 shrink-0" />
-              <span className="truncate">{s.label}</span>
-            </button>
-          );
-        })}
-      </nav>
+  // Body é desabilitado (mas ainda navegável) quando o método não envia body.
+  // Marcamos com `disabled` pra opacidade + `disabledReason` pro tooltip.
+  const sections = useMemo<SectionItem<SectionId>[]>(
+    () =>
+      BASE_SECTIONS.map((s) =>
+        s.id === "body" && NO_BODY_METHODS.has(method)
+          ? { ...s, disabled: true, disabledReason: `${method} não envia body` }
+          : { ...s },
+      ),
+    [method],
+  );
 
-      {/* Conteúdo */}
-      <div className="min-w-0 flex-1 overflow-y-auto pl-4">
-        {section === "request" && (
-          <RequestSection
-            url={url}
-            method={method}
-            queryParams={values.queryParams}
-            onUrlChange={(v) => set("url", v)}
-            onMethodChange={(v) => set("method", v)}
-            onQueryParamsChange={(v) => set("queryParams", v)}
-          />
-        )}
-        {section === "headers" && (
-          <HeadersSection
-            headers={values.headers}
-            onChange={(v) => set("headers", v)}
-          />
-        )}
-        {section === "body" && (
-          <BodySection
-            method={method}
-            body={body}
-            onChange={setBody}
-          />
-        )}
-        {section === "auth" && <AuthSection auth={auth} onChange={setAuth} />}
-        {section === "advanced" && (
-          <AdvancedSection
-            timeoutMs={readNumber(values.timeoutMs)}
-            retry={readRetry(values.retry)}
-            followRedirects={readBool(values.followRedirects)}
-            skipSslVerify={readBool(values.skipSslVerify)}
-            proxy={readString(values.proxy)}
-            onChange={(patch) => onChange(patch)}
-          />
-        )}
-      </div>
-    </div>
+  return (
+    <Sections sections={sections} value={section} onValueChange={setSection} ariaLabel="Seções de configuração HTTP">
+      {section === "request" && (
+        <RequestSection
+          url={url}
+          method={method}
+          queryParams={values.queryParams}
+          onUrlChange={(v) => set("url", v)}
+          onMethodChange={(v) => set("method", v)}
+          onQueryParamsChange={(v) => set("queryParams", v)}
+        />
+      )}
+      {section === "headers" && (
+        <HeadersSection headers={values.headers} onChange={(v) => set("headers", v)} />
+      )}
+      {section === "body" && <BodySection method={method} body={body} onChange={setBody} />}
+      {section === "auth" && <AuthSection auth={auth} onChange={setAuth} />}
+      {section === "advanced" && (
+        <AdvancedSection
+          timeoutMs={readNumber(values.timeoutMs)}
+          retry={readRetry(values.retry)}
+          followRedirects={readBool(values.followRedirects)}
+          skipSslVerify={readBool(values.skipSslVerify)}
+          proxy={readString(values.proxy)}
+          onChange={(patch) => onChange(patch)}
+        />
+      )}
+    </Sections>
   );
 }
 

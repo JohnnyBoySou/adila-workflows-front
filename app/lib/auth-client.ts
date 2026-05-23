@@ -35,5 +35,6 @@ export const {
   getSession,
   organization,
   useActiveOrganization,
+  useActiveMember,
   useListOrganizations,
 } = authClient;

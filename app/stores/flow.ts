@@ -10,7 +10,8 @@
  * usam Zustand internamente.
  */
 import { create } from "zustand";
-import { BackgroundVariant } from "@xyflow/react";
+import { persist } from "zustand/middleware";
+import { BackgroundVariant, ConnectionLineType } from "@xyflow/react";
 
 export type ToolMode = "select" | "pan";
 
@@ -20,12 +21,37 @@ const BG_VARIANTS: BackgroundVariant[] = [
   BackgroundVariant.Cross,
 ];
 
+export type EdgeStyle = {
+  /** Tipo da curva da edge (default/bezier/straight/step/smoothstep/simplebezier). */
+  type: ConnectionLineType;
+  /** Cor sólida; usa hex pra ser plug-and-play com SVG stroke. */
+  color: string;
+  /** Anima o pontilhado/fluxo da edge. */
+  animated: boolean;
+  /** Aplica `stroke-dasharray` na edge. */
+  dashed: boolean;
+  /** Espessura do traço em px. */
+  thickness: number;
+  /** Marca de seta no destino. */
+  arrow: boolean;
+};
+
+export const DEFAULT_EDGE_STYLE: EdgeStyle = {
+  type: ConnectionLineType.Bezier,
+  color: "#94a3b8",
+  animated: true,
+  dashed: false,
+  thickness: 1.5,
+  arrow: false,
+};
+
 type FlowState = {
   tool: ToolMode;
   locked: boolean;
   miniMapVisible: boolean;
   libraryOpen: boolean;
   backgroundVariant: BackgroundVariant;
+  edgeStyle: EdgeStyle;
 
   setTool: (tool: ToolMode) => void;
   setLocked: (locked: boolean) => void;
@@ -34,24 +60,45 @@ type FlowState = {
   toggleMiniMap: () => void;
   setLibraryOpen: (open: boolean) => void;
   cycleBackground: () => void;
+  setBackgroundVariant: (variant: BackgroundVariant) => void;
+  setEdgeStyle: (style: Partial<EdgeStyle>) => void;
+  resetEdgeStyle: () => void;
 };
 
-export const useFlowStore = create<FlowState>()((set) => ({
-  tool: "select",
-  locked: false,
-  miniMapVisible: true,
-  libraryOpen: false,
-  backgroundVariant: BackgroundVariant.Dots,
+export const useFlowStore = create<FlowState>()(
+  persist(
+    (set) => ({
+      tool: "select",
+      locked: false,
+      miniMapVisible: true,
+      libraryOpen: false,
+      backgroundVariant: BackgroundVariant.Dots,
+      edgeStyle: DEFAULT_EDGE_STYLE,
 
-  setTool: (tool) => set({ tool }),
-  setLocked: (locked) => set({ locked }),
-  toggleLock: () => set((s) => ({ locked: !s.locked })),
-  setMiniMapVisible: (miniMapVisible) => set({ miniMapVisible }),
-  toggleMiniMap: () => set((s) => ({ miniMapVisible: !s.miniMapVisible })),
-  setLibraryOpen: (libraryOpen) => set({ libraryOpen }),
-  cycleBackground: () =>
-    set((s) => {
-      const idx = BG_VARIANTS.indexOf(s.backgroundVariant);
-      return { backgroundVariant: BG_VARIANTS[(idx + 1) % BG_VARIANTS.length] };
+      setTool: (tool) => set({ tool }),
+      setLocked: (locked) => set({ locked }),
+      toggleLock: () => set((s) => ({ locked: !s.locked })),
+      setMiniMapVisible: (miniMapVisible) => set({ miniMapVisible }),
+      toggleMiniMap: () => set((s) => ({ miniMapVisible: !s.miniMapVisible })),
+      setLibraryOpen: (libraryOpen) => set({ libraryOpen }),
+      cycleBackground: () =>
+        set((s) => {
+          const idx = BG_VARIANTS.indexOf(s.backgroundVariant);
+          return { backgroundVariant: BG_VARIANTS[(idx + 1) % BG_VARIANTS.length] };
+        }),
+      setBackgroundVariant: (backgroundVariant) => set({ backgroundVariant }),
+      setEdgeStyle: (style) => set((s) => ({ edgeStyle: { ...s.edgeStyle, ...style } })),
+      resetEdgeStyle: () => set({ edgeStyle: DEFAULT_EDGE_STYLE }),
     }),
-}));
+    {
+      name: "flow-ui",
+      // Persiste só preferências visuais — toggles de sessão (libraryOpen, tool)
+      // ficam de fora pra não "vazar" estado efêmero entre recargas.
+      partialize: (s) => ({
+        miniMapVisible: s.miniMapVisible,
+        backgroundVariant: s.backgroundVariant,
+        edgeStyle: s.edgeStyle,
+      }),
+    },
+  ),
+);

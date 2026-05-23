@@ -1,5 +1,4 @@
-import { Fragment } from "react";
-import { Link, useLocation, useNavigate } from "react-router";
+import { motion } from "framer-motion";
 import {
   ArrowLeft,
   ChevronsUpDown,
@@ -8,14 +7,14 @@ import {
   LogOut,
   Settings,
   User,
+  Users,
   Workflow,
 } from "lucide-react";
-import { motion } from "framer-motion";
+import { Fragment } from "react";
+import { Link, useLocation, useNavigate } from "react-router";
 
-import { OrgSwitcher } from "~/components/org-switcher";
+import { OrgSwitcher } from "~/components/auth/org-switcher";
 
-import { authClient, useSession } from "~/lib/auth-client";
-import { cn } from "~/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "~/components/ui/avatar";
 import {
   Breadcrumb,
@@ -51,6 +50,8 @@ import {
   SidebarRail,
   SidebarTrigger,
 } from "~/components/ui/sidebar";
+import { authClient, useSession } from "~/lib/auth-client";
+import { cn } from "~/lib/utils";
 
 type NavItem = {
   title: string;
@@ -61,6 +62,7 @@ type NavItem = {
 const primaryNav: NavItem[] = [
   { title: "Dashboard", to: "/dashboard", icon: LayoutDashboard },
   { title: "Workflows", to: "/dashboard/workflows", icon: Workflow },
+  { title: "Usuários", to: "/dashboard/users", icon: Users },
 ];
 
 const secondaryNav: NavItem[] = [{ title: "Suporte", to: "#", icon: LifeBuoy }];
