@@ -32,6 +32,8 @@ export type Trigger = {
   allowedMethods: WebhookMethod[];
   /** True quando há segredo HMAC configurado (não devolve o valor — só presença). */
   hmacSecret: string | null;
+  /** Schema de validação do body de entrada. Null = sem validação. */
+  inputSchema: WebhookInputSchema | null;
 
   lastTriggeredAt: string | null;
   lastRunId: string | null;
@@ -73,6 +75,22 @@ export type CreateCronTriggerInput = {
 
 export type CreateTriggerInput = CreateWebhookTriggerInput | CreateCronTriggerInput;
 
+export type WebhookFieldSchema = {
+  type: "string" | "number" | "integer" | "boolean" | "object" | "array";
+  description?: string;
+  minLength?: number;
+  maxLength?: number;
+  pattern?: string;
+  enum?: string[];
+  minimum?: number;
+  maximum?: number;
+};
+
+export type WebhookInputSchema = {
+  properties: Record<string, WebhookFieldSchema>;
+  required?: string[];
+};
+
 export type UpdateTriggerInput = {
   name?: string;
   enabled?: boolean;
@@ -83,6 +101,7 @@ export type UpdateTriggerInput = {
   webhookResponseTimeoutMs?: number;
   allowedMethods?: WebhookMethod[];
   hmacSecret?: string | null;
+  inputSchema?: WebhookInputSchema | null;
 };
 
 export type WebhookInvocation = {

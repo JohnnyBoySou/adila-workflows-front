@@ -24,6 +24,7 @@ import { SetVariablePanel } from "./set-variable-panel";
 import { RespondToWebhookPanel } from "./respond-to-webhook-panel";
 import { AggregatePanel } from "./aggregate-panel";
 import { DateTimePanel } from "./date-time-panel";
+import { ItemListsPanel } from "./item-lists-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
@@ -309,83 +310,12 @@ const crypto: NodeConfigSchema = {
   ],
 };
 
-const LIST_OPS = [
-  { value: "filter", label: "filter" },
-  { value: "sort", label: "sort" },
-  { value: "slice", label: "slice" },
-  { value: "distinct", label: "distinct" },
-  { value: "length", label: "length" },
-  { value: "reverse", label: "reverse" },
-];
-
-const FILTER_OPS = [
-  { value: "eq", label: "= (eq)" },
-  { value: "neq", label: "≠ (neq)" },
-  { value: "gt", label: ">" },
-  { value: "gte", label: "≥" },
-  { value: "lt", label: "<" },
-  { value: "lte", label: "≤" },
-  { value: "contains", label: "contains" },
-  { value: "truthy", label: "truthy" },
-  { value: "falsy", label: "falsy" },
-];
-
 const item_lists: NodeConfigSchema = {
   title: "Listas",
   dialogSize: "wide",
-  fields: [
-    { name: "operation", label: "Operação", type: "select", required: true, options: LIST_OPS },
-    {
-      name: "items",
-      label: "Items (template)",
-      type: "text",
-      placeholder: "{{ steps.fetch.rows }}",
-      description: "Expressão que resolva pra array.",
-    },
-    {
-      name: "field",
-      label: "Campo (dot-path)",
-      type: "text",
-      placeholder: "user.email",
-      visibleWhen: (v) =>
-        v.operation === "filter" || v.operation === "sort" || v.operation === "distinct",
-    },
-    {
-      name: "op",
-      label: "Comparador",
-      type: "select",
-      options: FILTER_OPS,
-      visibleWhen: (v) => v.operation === "filter",
-    },
-    {
-      name: "value",
-      label: "Valor de comparação",
-      type: "text",
-      visibleWhen: (v) => v.operation === "filter" && v.op !== "truthy" && v.op !== "falsy",
-    },
-    {
-      name: "order",
-      label: "Ordem",
-      type: "select",
-      options: [
-        { value: "asc", label: "ascendente" },
-        { value: "desc", label: "descendente" },
-      ],
-      visibleWhen: (v) => v.operation === "sort",
-    },
-    {
-      name: "start",
-      label: "Start",
-      type: "number",
-      visibleWhen: (v) => v.operation === "slice",
-    },
-    {
-      name: "end",
-      label: "End",
-      type: "number",
-      visibleWhen: (v) => v.operation === "slice",
-    },
-  ],
+  fields: [],
+  customPanel: ItemListsPanel,
+  customPanelOwnsMeta: true,
 };
 
 const aggregate: NodeConfigSchema = {

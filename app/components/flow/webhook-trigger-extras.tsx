@@ -14,12 +14,15 @@ import {
   Copy,
   Eye,
   EyeOff,
+  FileJson,
   History,
   Loader2,
+  Plus,
   RefreshCw,
   Send,
   Settings,
   Shield,
+  Trash2,
   Webhook,
 } from "lucide-react";
 import {
@@ -43,7 +46,9 @@ import { cn } from "~/lib/utils";
 import * as triggersApi from "~/services/triggers";
 import type {
   Trigger,
+  WebhookFieldSchema,
   WebhookHealth,
+  WebhookInputSchema,
   WebhookInvocation,
   WebhookMethod,
 } from "~/services/triggers";
@@ -127,10 +132,11 @@ export function WebhookTriggerExtras({ workflowId, nodeId }: Props) {
 /* Painel com Sections (sidebar nav + conteúdo)                               */
 /* -------------------------------------------------------------------------- */
 
-type SectionKey = "config" | "resposta" | "teste" | "seguranca" | "invocacoes" | "saude";
+type SectionKey = "config" | "schema" | "resposta" | "teste" | "seguranca" | "invocacoes" | "saude";
 
 const WEBHOOK_SECTIONS: ReadonlyArray<SectionItem<SectionKey>> = [
   { id: "config", label: "Config", icon: Settings },
+  { id: "schema", label: "Schema", icon: FileJson },
   { id: "resposta", label: "Resposta", icon: RefreshCw },
   { id: "teste", label: "Teste", icon: Send },
   { id: "seguranca", label: "Segurança", icon: Shield },
@@ -161,6 +167,9 @@ function TriggerActiveTabbed({
     >
       {section === "config" && (
         <ConfigTab workflowId={workflowId} trigger={trigger} url={url} onChanged={onChanged} />
+      )}
+      {section === "schema" && (
+        <SchemaTab workflowId={workflowId} trigger={trigger} onChanged={onChanged} />
       )}
       {section === "resposta" && (
         <ResponseTab workflowId={workflowId} trigger={trigger} onChanged={onChanged} />
@@ -356,6 +365,269 @@ function ConfigTab({
           Remover webhook
         </Button>
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Seção Schema — validação do body de entrada                                */
+/* -------------------------------------------------------------------------- */
+
+const FIELD_TYPES: Array<{ value: WebhookFieldSchema["type"]; label: string }> = [
+  { value: "string", label: "String" },
+  { value: "number", label: "Number" },
+  { value: "integer", label: "Integer" },
+  { value: "boolean", label: "Boolean" },
+  { value: "object", label: "Object" },
+  { value: "array", label: "Array" },
+];
+
+type DraftField = WebhookFieldSchema & { name: string };
+
+function schemaToFields(schema: WebhookInputSchema | null): DraftField[] {
+  if (!schema) return [];
+  return Object.entries(schema.properties).map(([name, f]) => ({ name, ...f }));
+}
+
+function fieldsToDraft(fields: DraftField[], required: string[]): WebhookInputSchema {
+  const properties: Record<string, WebhookFieldSchema> = {};
+  for (const { name, ...rest } of fields) {
+    if (name.trim()) properties[name.trim()] = rest;
+  }
+  return { properties, required: required.filter((r) => r in properties) };
+}
+
+function SchemaTab({
+  workflowId,
+  trigger,
+  onChanged,
+}: {
+  workflowId: string;
+  trigger: Trigger;
+  onChanged: () => void;
+}) {
+  const [fields, setFields] = useState<DraftField[]>(() =>
+    schemaToFields(trigger.inputSchema ?? null),
+  );
+  const [required, setRequired] = useState<string[]>(trigger.inputSchema?.required ?? []);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  function addField() {
+    setFields((prev) => [...prev, { name: "", type: "string" }]);
+    setSaved(false);
+  }
+
+  function removeField(idx: number) {
+    setFields((prev) => {
+      const next = prev.filter((_, i) => i !== idx);
+      setRequired((r) => r.filter((n) => n !== prev[idx]?.name));
+      return next;
+    });
+    setSaved(false);
+  }
+
+  function updateField(idx: number, patch: Partial<DraftField>) {
+    setFields((prev) => prev.map((f, i) => (i === idx ? { ...f, ...patch } : f)));
+    setSaved(false);
+  }
+
+  function toggleRequired(name: string) {
+    setRequired((prev) =>
+      prev.includes(name) ? prev.filter((n) => n !== name) : [...prev, name],
+    );
+    setSaved(false);
+  }
+
+  async function save() {
+    setSaving(true);
+    try {
+      const schema = fields.length > 0 ? fieldsToDraft(fields, required) : null;
+      await triggersApi.update(workflowId, trigger.id, { inputSchema: schema });
+      onChanged();
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <div>
+        <p className="text-xs font-semibold text-foreground">Schema de entrada</p>
+        <p className="text-[11px] text-muted-foreground">
+          Defina os campos esperados no body. Requisições com body inválido recebem{" "}
+          <code className="rounded bg-muted px-1">400</code> com detalhes por campo.
+        </p>
+      </div>
+
+      {fields.length === 0 ? (
+        <div className="rounded-md border border-dashed border-border px-4 py-5 text-center text-[11px] text-muted-foreground">
+          Nenhum campo definido — qualquer body é aceito.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {/* Header */}
+          <div className="grid grid-cols-[1fr_110px_60px_28px] gap-2 px-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            <span>Campo</span>
+            <span>Tipo</span>
+            <span className="text-center">Obrig.</span>
+            <span />
+          </div>
+
+          {fields.map((field, idx) => (
+            <div key={idx} className="space-y-1">
+              <div className="grid grid-cols-[1fr_110px_60px_28px] items-center gap-2">
+                <input
+                  type="text"
+                  value={field.name}
+                  onChange={(e) => updateField(idx, { name: e.target.value })}
+                  placeholder="nome_do_campo"
+                  className="rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                />
+                <select
+                  value={field.type}
+                  onChange={(e) =>
+                    updateField(idx, { type: e.target.value as WebhookFieldSchema["type"] })
+                  }
+                  className="rounded-md border border-border bg-background px-2 py-1 text-[11px] outline-none focus:ring-1 focus:ring-ring"
+                >
+                  {FIELD_TYPES.map((t) => (
+                    <option key={t.value} value={t.value}>
+                      {t.label}
+                    </option>
+                  ))}
+                </select>
+                <div className="flex justify-center">
+                  <input
+                    type="checkbox"
+                    checked={required.includes(field.name)}
+                    onChange={() => toggleRequired(field.name)}
+                    disabled={!field.name.trim()}
+                    className="size-4 cursor-pointer accent-primary"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeField(idx)}
+                  className="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
+                >
+                  <Trash2 className="size-3.5" />
+                </button>
+              </div>
+
+              {/* Linha de descrição + constraints por tipo */}
+              <div className="grid grid-cols-2 gap-2 pl-1">
+                <input
+                  type="text"
+                  value={field.description ?? ""}
+                  onChange={(e) => updateField(idx, { description: e.target.value || undefined })}
+                  placeholder="Descrição (opcional)"
+                  className="col-span-2 rounded-md border border-border bg-background px-2 py-0.5 text-[10px] text-muted-foreground outline-none focus:ring-1 focus:ring-ring"
+                />
+                {(field.type === "string") && (
+                  <>
+                    <input
+                      type="number"
+                      value={field.minLength ?? ""}
+                      onChange={(e) =>
+                        updateField(idx, {
+                          minLength: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                      placeholder="minLength"
+                      className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <input
+                      type="number"
+                      value={field.maxLength ?? ""}
+                      onChange={(e) =>
+                        updateField(idx, {
+                          maxLength: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                      placeholder="maxLength"
+                      className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <input
+                      type="text"
+                      value={field.enum?.join(", ") ?? ""}
+                      onChange={(e) =>
+                        updateField(idx, {
+                          enum: e.target.value
+                            ? e.target.value.split(",").map((s) => s.trim())
+                            : undefined,
+                        })
+                      }
+                      placeholder="enum: val1, val2, val3"
+                      className="col-span-2 rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </>
+                )}
+                {(field.type === "number" || field.type === "integer") && (
+                  <>
+                    <input
+                      type="number"
+                      value={field.minimum ?? ""}
+                      onChange={(e) =>
+                        updateField(idx, {
+                          minimum: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                      placeholder="minimum"
+                      className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                    />
+                    <input
+                      type="number"
+                      value={field.maximum ?? ""}
+                      onChange={(e) =>
+                        updateField(idx, {
+                          maximum: e.target.value ? Number(e.target.value) : undefined,
+                        })
+                      }
+                      placeholder="maximum"
+                      className="rounded-md border border-border bg-background px-2 py-0.5 font-mono text-[10px] outline-none focus:ring-1 focus:ring-ring"
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex items-center gap-2">
+        <Button type="button" variant="outline" size="sm" onClick={addField} className="gap-1.5">
+          <Plus className="size-3.5" /> Adicionar campo
+        </Button>
+        <Button
+          type="button"
+          size="sm"
+          onClick={save}
+          disabled={saving}
+          className="ml-auto gap-1.5"
+        >
+          {saving ? (
+            <Loader2 className="size-3.5 animate-spin" />
+          ) : saved ? (
+            <Check className="size-3.5 text-emerald-400" />
+          ) : null}
+          {saved ? "Salvo" : "Salvar schema"}
+        </Button>
+      </div>
+
+      {/* Preview JSON Schema */}
+      {fields.length > 0 && (
+        <details className="rounded-md border border-border bg-muted/30">
+          <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-muted-foreground hover:text-foreground">
+            Ver JSON Schema gerado
+          </summary>
+          <pre className="overflow-x-auto border-t border-border px-3 py-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
+            {JSON.stringify(fieldsToDraft(fields, required), null, 2)}
+          </pre>
+        </details>
+      )}
     </div>
   );
 }

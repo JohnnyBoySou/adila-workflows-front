@@ -265,3 +265,16 @@ export function dryRunDate(
     ),
   );
 }
+
+export function dryRunItemLists(
+  workflowId: string,
+  nodeId: string,
+  body: DryRunCtxInput,
+): Promise<DryRunResponse> {
+  return unwrap(
+    $fetch<DryRunResponse>(
+      `/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/dry-run-item-lists`,
+      { method: "POST", body },
+    ),
+  );
+}
