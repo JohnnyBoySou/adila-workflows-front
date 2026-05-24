@@ -13,11 +13,26 @@
  */
 import { API_BASE_URL } from "./index";
 
+/**
+ * Deriva URL do realtime a partir da URL da API:
+ *  - dev (http + porta explícita): `PORT + 1` (ex.: 3000 → 3001)
+ *  - prod (https sem porta): troca subdomain `api.` por `realtime.`
+ *    (ex.: https://api.foo.com → https://realtime.foo.com)
+ *
+ * Convenção de prod evita depender de `VITE_REALTIME_URL` em build —
+ * env de Vite tem que estar setada no momento do `vite build`, e isso
+ * varia entre PaaS (build args vs runtime). O override segue funcionando
+ * pra quem precisar.
+ */
 function deriveRealtimeFromApi(apiUrl: string): string {
   try {
     const u = new URL(apiUrl, typeof window !== "undefined" ? window.location.origin : "http://localhost");
-    const port = u.port ? Number(u.port) + 1 : (u.protocol === "https:" ? 444 : 81);
-    u.port = String(port);
+    if (u.protocol === "https:" && !u.port) {
+      u.hostname = u.hostname.replace(/^api\./, "realtime.");
+      return u.toString().replace(/\/$/, "");
+    }
+    const basePort = u.port ? Number(u.port) : 80;
+    u.port = String(basePort + 1);
     return u.toString().replace(/\/$/, "");
   } catch {
     return apiUrl;
