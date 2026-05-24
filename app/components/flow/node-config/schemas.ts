@@ -25,6 +25,7 @@ import { RespondToWebhookPanel } from "./respond-to-webhook-panel";
 import { AggregatePanel } from "./aggregate-panel";
 import { DateTimePanel } from "./date-time-panel";
 import { ItemListsPanel } from "./item-lists-panel";
+import { CryptoPanel } from "./crypto-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
@@ -234,80 +235,12 @@ const date_time: NodeConfigSchema = {
   customPanelOwnsMeta: true,
 };
 
-const CRYPTO_OPS = [
-  { value: "hash", label: "hash" },
-  { value: "hmac", label: "hmac" },
-  { value: "uuid", label: "uuid" },
-  { value: "random", label: "random" },
-  { value: "base64", label: "base64" },
-];
-
-const HASH_ALGOS = [
-  { value: "md5", label: "MD5" },
-  { value: "sha1", label: "SHA-1" },
-  { value: "sha256", label: "SHA-256" },
-  { value: "sha512", label: "SHA-512" },
-];
-
-const ENCODINGS = [
-  { value: "hex", label: "hex" },
-  { value: "base64", label: "base64" },
-];
-
 const crypto: NodeConfigSchema = {
   title: "Crypto",
   dialogSize: "wide",
-  fields: [
-    { name: "operation", label: "Operação", type: "select", required: true, options: CRYPTO_OPS },
-    {
-      name: "algorithm",
-      label: "Algoritmo",
-      type: "select",
-      options: HASH_ALGOS,
-      visibleWhen: (v) => v.operation === "hash" || v.operation === "hmac",
-    },
-    {
-      name: "value",
-      label: "Valor",
-      type: "textarea",
-      rows: 3,
-      visibleWhen: (v) =>
-        v.operation === "hash" || v.operation === "hmac" || v.operation === "base64",
-    },
-    {
-      name: "secret",
-      label: "Secret",
-      type: "text",
-      placeholder: "{{ env.SIGN_SECRET }}",
-      visibleWhen: (v) => v.operation === "hmac",
-    },
-    {
-      name: "encoding",
-      label: "Encoding",
-      type: "select",
-      options: ENCODINGS,
-      visibleWhen: (v) =>
-        v.operation === "hash" || v.operation === "hmac" || v.operation === "random",
-    },
-    {
-      name: "bytes",
-      label: "Bytes",
-      type: "number",
-      min: 1,
-      placeholder: "32",
-      visibleWhen: (v) => v.operation === "random",
-    },
-    {
-      name: "mode",
-      label: "Modo",
-      type: "select",
-      options: [
-        { value: "encode", label: "encode" },
-        { value: "decode", label: "decode" },
-      ],
-      visibleWhen: (v) => v.operation === "base64",
-    },
-  ],
+  fields: [],
+  customPanel: CryptoPanel,
+  customPanelOwnsMeta: true,
 };
 
 const item_lists: NodeConfigSchema = {

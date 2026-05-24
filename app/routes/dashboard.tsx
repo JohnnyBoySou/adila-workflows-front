@@ -2,6 +2,7 @@ import { createContext, useContext, useState } from "react";
 import { Outlet, useMatches } from "react-router";
 
 import { AppShell, type Crumb } from "~/components/sidebar/app-shell";
+import { RequireAuth } from "~/components/auth/require-auth";
 
 /**
  * Tipo do `handle` que cada rota filha pode exportar para participar
@@ -69,10 +70,12 @@ export default function DashboardLayout() {
   );
 
   return (
-    <DynamicCrumbsContext value={setDynamicCrumbs}>
-      <AppShell title={leafHandle?.title ?? "Dashboard"} crumbs={deduped}>
-        <Outlet />
-      </AppShell>
-    </DynamicCrumbsContext>
+    <RequireAuth>
+      <DynamicCrumbsContext value={setDynamicCrumbs}>
+        <AppShell title={leafHandle?.title ?? "Dashboard"} crumbs={deduped}>
+          <Outlet />
+        </AppShell>
+      </DynamicCrumbsContext>
+    </RequireAuth>
   );
 }

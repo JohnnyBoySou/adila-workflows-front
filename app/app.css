@@ -169,6 +169,44 @@
   }
 }
 
+/* ── Scrollbar fina e elegante ─────────────────────────────────────────
+   Webkit (Chrome/Edge/Safari): 8px de canal, 6px de thumb (track inset).
+   Firefox: thin + cores via scrollbar-color. Hover intensifica.
+   Cores baseadas no foreground com alpha — segue o tema sem CSS extra. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in oklab, var(--color-foreground) 18%, transparent) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--color-foreground) 18%, transparent);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--color-foreground) 35%, transparent);
+}
+*::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* Em tema dark deixamos com leve aumento de contraste pra não sumir. */
+.dark * {
+  scrollbar-color: color-mix(in oklab, var(--color-foreground) 22%, transparent) transparent;
+}
+.dark *::-webkit-scrollbar-thumb {
+  background-color: color-mix(in oklab, var(--color-foreground) 22%, transparent);
+}
+.dark *::-webkit-scrollbar-thumb:hover {
+  background-color: color-mix(in oklab, var(--color-foreground) 45%, transparent);
+}
+
 /* Pulse de opacidade — edges animadas, sólidas, sem gradient.
    Quando gradient+animated está ligado, o efeito é o pico viajante via
    SVG animateTransform no linearGradient (sem CSS necessário). */

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, Navigate, useParams } from "react-router";
+import { Link, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
@@ -13,6 +13,7 @@ import {
 import { FlowTopBar, type FlowTab, type SaveState } from "~/components/flow/flow-top-bar";
 import { WorkflowInfoDialog, type WorkflowInfo } from "~/components/flow/workflow-info-dialog";
 import { ConnectionsManagerDialog } from "~/components/database-connections/connections-manager-dialog";
+import { RequireAuth } from "~/components/auth/require-auth";
 import { ExecutionsView } from "~/components/flow/executions-view";
 import { PerformanceView } from "~/components/flow/performance-view";
 import { Button } from "~/components/ui/button";
@@ -43,6 +44,14 @@ const AUTO_SAVE_DEBOUNCE_MS = 30_000;
 const TERMINAL_RUN_STATUSES = new Set<RunStatus>(["success", "failed", "cancelled"]);
 
 export default function FlowRoute() {
+  return (
+    <RequireAuth>
+      <FlowRouteInner />
+    </RequireAuth>
+  );
+}
+
+function FlowRouteInner() {
   const { id } = useParams<{ id: string }>();
 
   // React Flow precisa do DOM (mede nós, faz fitView), então só montamos no cliente.
@@ -56,7 +65,7 @@ export default function FlowRoute() {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
 
-  const { data: sessionData, isPending: sessionPending } = useSession();
+  const { data: sessionData } = useSession();
   const collabUser = sessionData?.user
     ? {
         id: sessionData.user.id,
@@ -273,14 +282,6 @@ export default function FlowRoute() {
 
   // ── Estados de carregamento / erro ────────────────────────────────────
   if (!id) return <NotFoundState />;
-  // Sem sessão → manda pro login antes de tentar buscar o workflow (que
-  // retornaria 401 e cairia no handler global, mas o redirect direto evita
-  // o flash de "não encontrado" quando o usuário cola uma URL profunda).
-  if (sessionPending) return <LoadingState />;
-  if (!sessionData?.session) {
-    const next = `/flow/${id}`;
-    return <Navigate to={`/auth?next=${encodeURIComponent(next)}`} replace />;
-  }
   if (workflowQuery.isPending) return <LoadingState />;
   if (workflowQuery.error || !workflowQuery.data) return <NotFoundState />;
 
