@@ -214,18 +214,11 @@ export function useCollaboration({
         }
         attemptRef.current = 0;
         setStatus("online");
-        send({ type: "user.joined", userId: userId!, cursor: { x: 0, y: 0 } });
-        // Heartbeat — backend expira presença em ~45s; mandamos cursor.move
-        // a cada 15s pra manter o TTL ativo mesmo sem mouse.
-        heartbeatRef.current = setInterval(() => {
-          send({
-            type: "cursor.move",
-            userId: userId!,
-            cursor: { x: lastSentCursorRef.current.x, y: lastSentCursorRef.current.y },
-            ...(lastSelectionRef.current && { selectedNodeId: lastSelectionRef.current }),
-            ...(lastViewportRef.current && { viewport: lastViewportRef.current }),
-          });
-        }, 15000);
+        // NÃO enviar user.joined aqui — o handler `open` do servidor é async
+        // (autorize + subscribe Redis); se enviarmos antes dele popular o
+        // estado da conexão, o server trata como anônimo e fecha o socket.
+        // Aguardamos `room.ready` (enviado ao fim do open) antes de mandar
+        // qualquer mensagem.
       };
 
       ws.onmessage = (evt) => {
@@ -239,7 +232,22 @@ export function useCollaboration({
           setStatus("offline");
           return;
         }
-        if (parsed.type === "room.ready") return;
+        if (parsed.type === "room.ready") {
+          send({ type: "user.joined", userId: userId!, cursor: { x: 0, y: 0 } });
+          // Heartbeat — backend expira presença em ~45s; mandamos cursor.move
+          // a cada 15s pra manter o TTL ativo mesmo sem mouse.
+          if (heartbeatRef.current) clearInterval(heartbeatRef.current);
+          heartbeatRef.current = setInterval(() => {
+            send({
+              type: "cursor.move",
+              userId: userId!,
+              cursor: { x: lastSentCursorRef.current.x, y: lastSentCursorRef.current.y },
+              ...(lastSelectionRef.current && { selectedNodeId: lastSelectionRef.current }),
+              ...(lastViewportRef.current && { viewport: lastViewportRef.current }),
+            });
+          }, 15000);
+          return;
+        }
         if (parsed.type === "yjs.update") {
           onYjsUpdateRef.current?.(parsed.updateBase64);
           return;
