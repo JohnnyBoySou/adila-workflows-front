@@ -16,11 +16,10 @@
  */
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router";
-import { AlertCircle, CheckCircle2, ExternalLink, Loader2, Settings2, Webhook } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { AlertCircle, Check, CheckCircle2, Copy, ExternalLink, Loader2, Settings2, Webhook } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { queryKeys } from "~/lib/query-keys";
 import * as triggersApi from "~/services/triggers";
-import { WebhookTriggerExtras } from "./webhook-trigger-extras";
 
 import { Button } from "~/components/ui/button";
 import { Label } from "~/components/ui/label";
@@ -288,6 +287,7 @@ function WebhookNodeEntry({
   workflowId: string;
   node: PersistedNode;
 }) {
+  const queryClient = useQueryClient();
   const triggersQuery = useQuery({
     queryKey: queryKeys.triggers.list(workflowId),
     queryFn: () => triggersApi.list(workflowId, "webhook"),
@@ -295,39 +295,101 @@ function WebhookNodeEntry({
 
   const trigger = triggersQuery.data?.find((t) => t.nodeId === node.id) ?? null;
   const title = (node.config as Record<string, unknown> | undefined)?.title as string | undefined;
+  const url = trigger?.webhookToken ? triggersApi.webhookUrl(trigger.webhookToken) : null;
+  const [copied, setCopied] = useState(false);
+
+  const createMutation = useMutation({
+    mutationFn: () =>
+      triggersApi.create(workflowId, {
+        type: "webhook",
+        name: title ?? `Webhook ${node.id.slice(0, 6)}`,
+        nodeId: node.id,
+        webhookResponseMode: "async",
+      }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.triggers.list(workflowId) }),
+  });
+
+  const toggleMutation = useMutation({
+    mutationFn: () =>
+      triggersApi.update(workflowId, trigger!.id, { enabled: !trigger!.enabled }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: queryKeys.triggers.list(workflowId) }),
+  });
+
+  async function copy() {
+    if (!url) return;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch { /* sem clipboard */ }
+  }
 
   return (
     <div className="rounded-md border border-border bg-muted/20">
-      <div className="flex items-center gap-2 border-b border-border px-3 py-2">
+      {/* Header */}
+      <div className="flex items-center gap-2 px-3 py-2">
         <Webhook className="size-3.5 text-muted-foreground" />
         <span className="text-sm font-medium">{title ?? "Webhook"}</span>
-        <span className="font-mono text-[10px] text-muted-foreground">({node.id.slice(0, 8)})</span>
-        {trigger && (
-          <span
-            className={`ml-auto flex items-center gap-1 text-[10px] font-medium ${trigger.enabled ? "text-emerald-600" : "text-muted-foreground"}`}
+        {trigger ? (
+          <>
+            <span
+              className={`ml-auto flex items-center gap-1.5 text-[11px] font-medium ${trigger.enabled ? "text-emerald-600" : "text-muted-foreground"}`}
+            >
+              <span
+                className={`size-1.5 rounded-full ${trigger.enabled ? "bg-emerald-500" : "bg-muted-foreground"}`}
+              />
+              {trigger.enabled ? "Ativo" : "Inativo"}
+            </span>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => toggleMutation.mutate()}
+              disabled={toggleMutation.isPending}
+            >
+              {trigger.enabled ? "Desativar" : "Ativar"}
+            </Button>
+          </>
+        ) : (
+          <Button
+            size="sm"
+            className="ml-auto h-6 px-2 text-[11px]"
+            onClick={() => createMutation.mutate()}
+            disabled={createMutation.isPending || triggersQuery.isPending}
           >
-            <span className={`size-1.5 rounded-full ${trigger.enabled ? "bg-emerald-500" : "bg-muted-foreground"}`} />
-            {trigger.enabled ? "Ativo" : "Inativo"}
-          </span>
+            {createMutation.isPending ? (
+              <Loader2 className="size-3 animate-spin" />
+            ) : null}
+            Habilitar
+          </Button>
         )}
       </div>
-      <div className="px-3 pb-3">
-        <WebhookTriggerExtras
-          workflowId={workflowId}
-          nodeId={node.id}
-          responseMode={
-            (node.config as Record<string, unknown> | undefined)?.responseMode as
-              | "async"
-              | "sync"
-              | undefined
-          }
-          responseTimeoutMs={
-            (node.config as Record<string, unknown> | undefined)?.responseTimeoutMs as
-              | number
-              | undefined
-          }
-        />
-      </div>
+
+      {/* URL */}
+      {url && (
+        <div className="border-t border-border px-3 py-2">
+          <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5">
+            <code className="flex-1 truncate font-mono text-[11px]">{url}</code>
+            <button
+              type="button"
+              onClick={copy}
+              aria-label="Copiar URL"
+              className="text-muted-foreground hover:text-foreground"
+            >
+              {copied ? (
+                <Check className="size-3.5 text-emerald-500" />
+              ) : (
+                <Copy className="size-3.5" />
+              )}
+            </button>
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            Configure métodos, HMAC e modo de resposta abrindo o nó no canvas.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

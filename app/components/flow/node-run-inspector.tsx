@@ -27,6 +27,7 @@ import { Button } from "~/components/ui/button";
 import { cn } from "~/lib/utils";
 import type { RunStep, StepStatus } from "~/services/runs";
 import { useExecutionStore } from "~/stores/execution";
+import { CopyJsonButton, HighlightedJson } from "./highlighted-json";
 
 type Props = {
   open: boolean;
@@ -247,15 +248,7 @@ function JsonBlock({
         >
           {label}
         </p>
-        {!isEmpty && data && (
-          <button
-            type="button"
-            onClick={() => navigator.clipboard.writeText(JSON.stringify(data, null, 2))}
-            className="text-[10px] text-muted-foreground hover:text-foreground"
-          >
-            copiar
-          </button>
-        )}
+        {!isEmpty && data && <CopyJsonButton value={data} />}
       </div>
       <div
         className={cn(
@@ -274,7 +267,11 @@ function JsonBlock({
               tone === "error" && "text-destructive/90",
             )}
           >
-            {JSON.stringify(data, null, 2)}
+            {tone === "error" ? (
+              JSON.stringify(data, null, 2)
+            ) : (
+              <HighlightedJson value={data} />
+            )}
           </pre>
         )}
       </div>

@@ -10,6 +10,7 @@ import {
   Loader2,
   PlayCircle,
   RefreshCw,
+  Workflow as WorkflowIcon,
   XCircle,
   type LucideIcon,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { cn } from "~/lib/utils";
 import * as runsApi from "~/services/runs";
 import type { RunStatus, RunStep, WorkflowRun } from "~/services/runs";
 import { subscribeToRunEvents } from "~/services/run-events";
+import { CopyJsonButton, HighlightedJson } from "./highlighted-json";
 import { useExecutionStore } from "~/stores/execution";
 
 type ExecutionsViewProps = {
@@ -27,6 +29,8 @@ type ExecutionsViewProps = {
   /** Run recém-disparado — abre o painel de detalhe automaticamente. */
   focusedRunId: string | null;
   onFocusedRunHandled?: () => void;
+  /** Pede pro pai trocar pra aba do editor com o overlay desta run. */
+  onOpenInEditor?: (runId: string) => void;
 };
 
 const STATUS_META: Record<
@@ -111,6 +115,7 @@ export function ExecutionsView({
   workflowId,
   focusedRunId,
   onFocusedRunHandled,
+  onOpenInEditor,
 }: ExecutionsViewProps) {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
@@ -218,7 +223,11 @@ export function ExecutionsView({
       {/* Detalhe à direita */}
       <section className="flex-1 overflow-y-auto">
         {selectedRunId ? (
-          <RunDetailPanel workflowId={workflowId} runId={selectedRunId} />
+          <RunDetailPanel
+            workflowId={workflowId}
+            runId={selectedRunId}
+            onOpenInEditor={onOpenInEditor}
+          />
         ) : (
           <DetailEmptyState hasRuns={runs.length > 0} />
         )}
@@ -312,7 +321,15 @@ function DetailEmptyState({ hasRuns }: { hasRuns: boolean }) {
 /* Painel de detalhe — steps em ordem, com SSE se o run ainda estiver vivo.    */
 /* -------------------------------------------------------------------------- */
 
-function RunDetailPanel({ workflowId, runId }: { workflowId: string; runId: string }) {
+function RunDetailPanel({
+  workflowId,
+  runId,
+  onOpenInEditor,
+}: {
+  workflowId: string;
+  runId: string;
+  onOpenInEditor?: (runId: string) => void;
+}) {
   const queryClient = useQueryClient();
 
   const runQuery = useQuery({
@@ -405,7 +422,7 @@ function RunDetailPanel({ workflowId, runId }: { workflowId: string; runId: stri
   const isTerminal = TERMINAL_STATUSES.has(run.status);
 
   return (
-    <div className="mx-auto max-w-4xl space-y-4 px-6 py-6">
+    <div className="mx-auto w-full max-w-[1600px] space-y-4 px-6 pb-6 pt-20">
       {/* Header do detalhe */}
       <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-border bg-card px-4 py-3">
         <div className="flex items-center gap-3">
@@ -416,6 +433,16 @@ function RunDetailPanel({ workflowId, runId }: { workflowId: string; runId: stri
           <span className="font-mono text-xs text-muted-foreground">{run.id}</span>
         </div>
         <div className="flex items-center gap-2">
+          {onOpenInEditor && (
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onOpenInEditor(run.id)}
+              title="Abre o editor com os nós percorridos por esta run destacados"
+            >
+              <WorkflowIcon className="size-4" /> Ver no editor
+            </Button>
+          )}
           {!isTerminal && (
             <Button
               size="sm"
@@ -456,20 +483,7 @@ function RunDetailPanel({ workflowId, runId }: { workflowId: string; runId: stri
           </div>
         )}
 
-        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-          Steps ({steps.length})
-        </h4>
-        {steps.length === 0 ? (
-          <p className="text-xs text-muted-foreground">Aguardando primeiro step…</p>
-        ) : (
-          <ol className="space-y-1.5">
-            {[...steps]
-              .toSorted((a, b) => a.index - b.index)
-              .map((step) => (
-                <StepRow key={step.id} step={step} />
-              ))}
-          </ol>
-        )}
+        <StepsSection steps={steps} run={run} />
 
         {run.error && (
           <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs">
@@ -491,6 +505,174 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
       <dd className="font-medium tabular-nums">{children}</dd>
     </div>
   );
+}
+
+/**
+ * Cabeçalho da seção de steps com toggle Lista/Trilha. Mantém o estado
+ * local — não vale persistir entre sessões; é mais UX-driven do que
+ * preferência durável.
+ */
+function StepsSection({ steps, run }: { steps: RunStep[]; run: WorkflowRun }) {
+  const sorted = [...steps].toSorted((a, b) => a.index - b.index);
+
+  if (steps.length === 0) {
+    return (
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Steps (0)
+        </h4>
+        <p className="text-xs text-muted-foreground">Aguardando primeiro step…</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Trilha ({steps.length})
+        </h4>
+        <RunTimeline steps={sorted} run={run} />
+      </div>
+      <div className="space-y-2">
+        <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+          Detalhes
+        </h4>
+        <ol className="space-y-1.5">
+          {sorted.map((step) => (
+            <StepRow key={step.id} step={step} />
+          ))}
+        </ol>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Trilha tipo Gantt das durações dos steps. Eixo X = tempo relativo ao
+ * início da run; cada step vira uma linha com barra proporcional. Steps
+ * paralelos (mesmo intervalo) aparecem empilhados — fica visualmente
+ * óbvio onde o workflow ramificou.
+ */
+function RunTimeline({ steps, run }: { steps: RunStep[]; run: WorkflowRun }) {
+  // Janela: do primeiro started_at até o último finished_at (ou agora,
+  // se ainda houver step rodando). Usamos run.startedAt como fallback.
+  const startMs = (() => {
+    const candidates = steps
+      .map((s) => (s.startedAt ? new Date(s.startedAt).getTime() : null))
+      .filter((v): v is number => v !== null);
+    if (run.startedAt) candidates.push(new Date(run.startedAt).getTime());
+    return candidates.length ? Math.min(...candidates) : Date.now();
+  })();
+
+  const endMs = (() => {
+    const candidates = steps
+      .map((s) => {
+        if (s.finishedAt) return new Date(s.finishedAt).getTime();
+        if (s.startedAt && s.durationMs !== null)
+          return new Date(s.startedAt).getTime() + s.durationMs;
+        return null;
+      })
+      .filter((v): v is number => v !== null);
+    if (run.finishedAt) candidates.push(new Date(run.finishedAt).getTime());
+    return candidates.length ? Math.max(...candidates) : startMs + 1;
+  })();
+
+  const totalMs = Math.max(1, endMs - startMs);
+
+  // Eixo: 4 marcações equidistantes (0%, 33%, 66%, 100%).
+  const ticks = [0, 0.25, 0.5, 0.75, 1].map((t) => ({
+    pct: t * 100,
+    label: formatMs(totalMs * t),
+  }));
+
+  return (
+    <div className="space-y-2 rounded-md border border-border bg-muted/10 p-3">
+      {/* Eixo de tempo */}
+      <div className="relative ml-32 mr-2 h-4 border-b border-border/60">
+        {ticks.map((t) => (
+          <span
+            key={t.pct}
+            className="absolute -bottom-0.5 -translate-x-1/2 text-[10px] tabular-nums text-muted-foreground"
+            style={{ left: `${t.pct}%` }}
+          >
+            {t.label}
+          </span>
+        ))}
+      </div>
+
+      <div className="space-y-1">
+        {steps.map((step) => {
+          const stepStart = step.startedAt ? new Date(step.startedAt).getTime() : startMs;
+          const stepEnd = step.finishedAt
+            ? new Date(step.finishedAt).getTime()
+            : step.durationMs !== null
+              ? stepStart + step.durationMs
+              : stepStart + 1;
+          const offsetPct = ((stepStart - startMs) / totalMs) * 100;
+          // Garante visibilidade mínima de 0.5% pra steps muito curtos.
+          const widthPct = Math.max(0.5, ((stepEnd - stepStart) / totalMs) * 100);
+
+          const statusKey: RunStatus =
+            step.status === "running"
+              ? "running"
+              : step.status === "success"
+                ? "success"
+                : "failed";
+          const meta = STATUS_META[statusKey];
+          const durLabel =
+            step.durationMs !== null
+              ? formatMs(step.durationMs)
+              : step.status === "running"
+                ? "em curso…"
+                : "—";
+
+          return (
+            <div key={step.id} className="flex items-center gap-2">
+              <div className="flex w-32 min-w-0 items-center gap-1.5 text-xs">
+                <span
+                  className={cn(
+                    "inline-flex size-4 shrink-0 items-center justify-center rounded-full text-[9px] font-semibold tabular-nums text-white",
+                    meta.dot,
+                  )}
+                >
+                  {step.index + 1}
+                </span>
+                <span className="truncate font-mono text-[11px]" title={step.nodeType}>
+                  {step.nodeType}
+                </span>
+              </div>
+              <div className="relative h-5 flex-1">
+                <div
+                  className={cn(
+                    "absolute top-0 h-full rounded-sm transition-all",
+                    meta.dot,
+                    step.status === "running" && "animate-pulse",
+                  )}
+                  style={{ left: `${offsetPct}%`, width: `${widthPct}%`, minWidth: 2 }}
+                  title={`${step.nodeType} — ${durLabel}`}
+                />
+              </div>
+              <span className="w-16 shrink-0 text-right text-[11px] tabular-nums text-muted-foreground">
+                {durLabel}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      <p className="pt-1 text-[10px] text-muted-foreground">
+        Total: {formatMs(totalMs)} · barras empilhadas em paralelo indicam fan-out
+      </p>
+    </div>
+  );
+}
+
+function formatMs(ms: number): string {
+  if (ms < 1) return "0ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 60_000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
 }
 
 function StepRow({ step }: { step: RunStep }) {
@@ -557,21 +739,24 @@ function JsonBlock({
         tone === "error" ? "border-destructive/40 bg-destructive/5" : "border-border",
       )}
     >
-      <p
-        className={cn(
-          "mb-1 font-medium",
-          tone === "error" ? "text-destructive" : "text-muted-foreground",
-        )}
-      >
-        {label}
-      </p>
+      <div className="mb-1 flex items-center justify-between">
+        <p
+          className={cn(
+            "font-medium",
+            tone === "error" ? "text-destructive" : "text-muted-foreground",
+          )}
+        >
+          {label}
+        </p>
+        {tone !== "error" && <CopyJsonButton value={data} />}
+      </div>
       <pre
         className={cn(
           "max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-[11px] leading-relaxed",
           tone === "error" && "text-destructive/90",
         )}
       >
-        {JSON.stringify(data, null, 2)}
+        {tone === "error" ? JSON.stringify(data, null, 2) : <HighlightedJson value={data} />}
       </pre>
     </div>
   );

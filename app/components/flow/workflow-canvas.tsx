@@ -55,7 +55,7 @@ import { FlowTransformPanel } from "./flow-transform-panel";
 
 // Campos de `node.data` que pertencem ao editor, não ao engine — não
 // devem aparecer no dialog de config nem ser sobrescritos por ele.
-const EDITOR_META_KEYS = new Set(["title", "description", "variant", "nodeType"]);
+const EDITOR_META_KEYS = new Set(["title", "description", "variant", "nodeType", "iconColor"]);
 
 const EDGE_GRADIENT_ID = "workflow-edge-gradient";
 // Gradient animado — pico de brilho viaja da esquerda pra direita e volta.
@@ -607,6 +607,7 @@ function Flow({
       meta = {
         title: typeof d.title === "string" ? d.title : undefined,
         description: typeof d.description === "string" ? d.description : undefined,
+        iconColor: typeof d.iconColor === "string" ? d.iconColor : undefined,
       };
     } else if (node.type === "sticky") {
       engineType = "sticky_note";
@@ -642,10 +643,12 @@ function Flow({
             const d = nextMeta.description?.trim();
             if (t) preserved.title = t;
             if (d) preserved.description = d;
+            if (nextMeta.iconColor) preserved.iconColor = nextMeta.iconColor;
           } else {
             // Visual node: preserva title/description antigos se houver.
             if ("title" in current) preserved.title = current.title;
             if ("description" in current) preserved.description = current.description;
+            if ("iconColor" in current) preserved.iconColor = current.iconColor;
           }
           return { ...n, data: { ...preserved, ...next } };
         }),
@@ -888,6 +891,30 @@ function Flow({
                     })}
                   </div>
                 </div>
+              </div>
+            </Panel>
+          )}
+          {focusedRunId && !presentationMode && (
+            <Panel position="top-center" className="!top-20">
+              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-sky-500/40 bg-sky-500/10 px-3 py-1.5 text-xs shadow-sm backdrop-blur">
+                <span className="size-2 animate-pulse rounded-full bg-sky-500" />
+                <span className="font-medium text-sky-700 dark:text-sky-300">
+                  Visualizando run
+                </span>
+                <span className="font-mono text-[10px] text-muted-foreground">
+                  {focusedRunId.slice(0, 8)}
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  · clique num nó pra inspecionar · duplo-clique pra editar
+                </span>
+                <button
+                  type="button"
+                  onClick={() => useExecutionStore.getState().clear()}
+                  className="ml-1 cursor-pointer rounded px-1.5 py-0.5 text-[11px] font-medium text-sky-700 hover:bg-sky-500/20 dark:text-sky-300"
+                  title="Sair do modo visualização"
+                >
+                  Sair
+                </button>
               </div>
             </Panel>
           )}

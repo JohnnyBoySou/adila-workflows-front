@@ -24,12 +24,29 @@ import type { FieldDef, NodeConfigSchema } from "./node-config/types";
 import { cn } from "~/lib/utils";
 import { useWorkflowId } from "./workflow-context";
 import { WebhookTriggerExtras } from "./webhook-trigger-extras";
+import { NODE_ICON_MAP } from "./node-library";
 
 /** Metadados editor-only do card no canvas (só nós executáveis). */
 export interface NodeMeta {
   title?: string;
   description?: string;
+  /** Override hex pra cor do ícone. Quando vazio cai no default do nodeType. */
+  iconColor?: string;
 }
+
+/** Paleta de cores rápida pra customização do ícone do nó. */
+const ICON_COLOR_PALETTE = [
+  "#10b981", // emerald
+  "#0ea5e9", // sky
+  "#f59e0b", // amber
+  "#ef4444", // rose
+  "#8b5cf6", // violet
+  "#ec4899", // pink
+  "#14b8a6", // teal
+  "#f97316", // orange
+  "#6366f1", // indigo
+  "#64748b", // slate
+];
 
 export interface NodeConfigDialogProps {
   open: boolean;
@@ -182,27 +199,37 @@ export function NodeConfigDialog({
       >
         <DialogHeader className="-mx-4 -mt-4 rounded-t-xl border-b border-border bg-muted/50 px-4 pb-3 pt-4">
           {showMeta ? (
-            <div className="space-y-1 pr-6">
-              <DialogTitle asChild>
-                <EditableTitle
-                  value={metaDraft.title ?? ""}
-                  fallback={schema.title}
-                  onChange={(next) => setMetaDraft({ ...metaDraft, title: next })}
-                />
-              </DialogTitle>
-              <EditableDescription
-                value={metaDraft.description ?? ""}
-                placeholder="Duplo-clique para adicionar uma descrição no card"
-                onChange={(next) => setMetaDraft({ ...metaDraft, description: next })}
+            <div className="flex items-start gap-3 pr-6">
+              <NodeIconSwatch
+                nodeType={nodeType}
+                color={metaDraft.iconColor}
+                onChange={(next) => setMetaDraft({ ...metaDraft, iconColor: next })}
               />
+              <div className="min-w-0 flex-1 space-y-1">
+                <DialogTitle asChild>
+                  <EditableTitle
+                    value={metaDraft.title ?? ""}
+                    fallback={schema.title}
+                    onChange={(next) => setMetaDraft({ ...metaDraft, title: next })}
+                  />
+                </DialogTitle>
+                <EditableDescription
+                  value={metaDraft.description ?? ""}
+                  placeholder="Duplo-clique para adicionar uma descrição no card"
+                  onChange={(next) => setMetaDraft({ ...metaDraft, description: next })}
+                />
+              </div>
             </div>
           ) : (
-            <>
-              <DialogTitle>{currentTitle}</DialogTitle>
-              {schema.description && (
-                <DialogDescription className="text-xs">{schema.description}</DialogDescription>
-              )}
-            </>
+            <div className="flex items-start gap-3">
+              <NodeIconSwatch nodeType={nodeType} color={undefined} />
+              <div className="min-w-0 flex-1">
+                <DialogTitle>{currentTitle}</DialogTitle>
+                {schema.description && (
+                  <DialogDescription className="text-xs">{schema.description}</DialogDescription>
+                )}
+              </div>
+            </div>
           )}
         </DialogHeader>
 
@@ -243,7 +270,7 @@ export function NodeConfigDialog({
                 }
               />
             </div>
-          ) : (
+          ) : visibleFields.length > 0 ? (
             <FieldsList
               schema={schema}
               values={draft}
@@ -251,15 +278,10 @@ export function NodeConfigDialog({
               onChange={setFieldValue}
               onParseError={setParseError}
             />
-          )}
+          ) : null}
           {nodeType === "webhook_trigger" && workflowId && nodeId && (
             <div className="px-3">
-              <WebhookTriggerExtras
-                workflowId={workflowId}
-                nodeId={nodeId}
-                responseMode={draft.responseMode as "async" | "sync" | undefined}
-                responseTimeoutMs={draft.responseTimeoutMs as number | undefined}
-              />
+              <WebhookTriggerExtras workflowId={workflowId} nodeId={nodeId} />
             </div>
           )}
         </div>
@@ -279,6 +301,103 @@ export function NodeConfigDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * Bloco do ícone do nó com paleta opcional. Quando `onChange` é fornecido,
+ * o swatch fica clicável e expande a paleta de cores ao lado. Persistência
+ * é feita pelo dialog via `metaDraft.iconColor`.
+ */
+function NodeIconSwatch({
+  nodeType,
+  color,
+  onChange,
+}: {
+  nodeType: string | undefined;
+  color: string | undefined;
+  onChange?: (next: string | undefined) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, [open]);
+
+  const iconEntry = nodeType ? NODE_ICON_MAP[nodeType] : undefined;
+  const Icon = iconEntry?.icon;
+  const defaultColorClass = iconEntry?.color ?? "text-muted-foreground";
+  const editable = !!onChange;
+
+  // Quando há cor custom, aplicamos via style inline (color + bg com alpha
+  // ~15%, achados via hex+"26"). Sem custom, usamos as classes do tailwind
+  // do mapa de ícones.
+  const swatchStyle = color
+    ? { color, backgroundColor: `${color}26` }
+    : undefined;
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => editable && setOpen((v) => !v)}
+        disabled={!editable}
+        title={editable ? "Clique para trocar a cor do ícone" : undefined}
+        className={cn(
+          "grid size-9 place-items-center rounded-md transition-shadow",
+          !color && (iconEntry ? "bg-muted" : "bg-muted"),
+          editable && "cursor-pointer hover:ring-2 hover:ring-ring/40",
+          open && "ring-2 ring-ring",
+        )}
+        style={swatchStyle}
+        aria-label="Cor do ícone"
+      >
+        {Icon ? (
+          <Icon className={cn("size-4", !color && defaultColorClass)} />
+        ) : (
+          <span className="size-4 rounded-sm bg-foreground/20" />
+        )}
+      </button>
+      {open && editable && (
+        <div className="absolute left-0 top-full z-50 mt-1 flex items-center gap-1 rounded-md border border-border bg-popover p-1.5 shadow-lg">
+          {ICON_COLOR_PALETTE.map((c) => (
+            <button
+              key={c}
+              type="button"
+              onClick={() => {
+                onChange?.(c);
+                setOpen(false);
+              }}
+              className={cn(
+                "size-5 cursor-pointer rounded-full ring-offset-2 ring-offset-popover transition-transform hover:scale-110",
+                color === c && "ring-2 ring-foreground",
+              )}
+              style={{ backgroundColor: c }}
+              aria-label={`Cor ${c}`}
+            />
+          ))}
+          {color && (
+            <button
+              type="button"
+              onClick={() => {
+                onChange?.(undefined);
+                setOpen(false);
+              }}
+              className="ml-1 cursor-pointer rounded px-1.5 py-0.5 text-[10px] text-muted-foreground hover:bg-muted hover:text-foreground"
+              title="Voltar à cor padrão do tipo"
+            >
+              Reset
+            </button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

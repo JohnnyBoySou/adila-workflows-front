@@ -14,7 +14,13 @@ import { PostgresPanel } from "./postgres-panel";
 import { RedisPanel } from "./redis-panel";
 import { S3Panel } from "./s3-panel";
 import { VectorStorePanel } from "./vector-store-panel";
+import { ChatMemoryPanel } from "./chat-memory-panel";
+import { EmbeddingsPanel } from "./embeddings-panel";
+import { DocumentLoaderPanel } from "./document-loader-panel";
 import { SwitchPanel } from "./switch-panel";
+import { SplitInBatchesPanel } from "./split-in-batches-panel";
+import { WaitPanel } from "./wait-panel";
+import { SetVariablePanel } from "./set-variable-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
@@ -28,29 +34,7 @@ const webhook_trigger: NodeConfigSchema = {
   description:
     "Disparado por POST em URL pública. O body JSON vira o input do run (acessível como steps[<id>].body).",
   dialogSize: "wide",
-  fields: [
-    {
-      name: "responseMode",
-      label: "Modo de resposta",
-      type: "select",
-      description:
-        "Async: responde 202 imediatamente. Sync: aguarda o run terminar e devolve o output (ou o body de um respond_to_webhook).",
-      options: [
-        { value: "async", label: "Async — 202 imediato" },
-        { value: "sync", label: "Sync — espera o run" },
-      ],
-    },
-    {
-      name: "responseTimeoutMs",
-      label: "Timeout sync (ms)",
-      type: "number",
-      min: 1000,
-      max: 120_000,
-      placeholder: "30000",
-      description: "Só usado em modo sync. Máx 120000 (2min).",
-      visibleWhen: (v) => v.responseMode === "sync",
-    },
-  ],
+  fields: [],
 };
 
 const end: NodeConfigSchema = {
@@ -217,38 +201,18 @@ const switch_: NodeConfigSchema = {
 
 const split_in_batches: NodeConfigSchema = {
   title: "Loop em lotes",
-  fields: [
-    {
-      name: "items",
-      label: "Coleção (template)",
-      type: "text",
-      required: true,
-      placeholder: "{{ steps.fetch.rows }}",
-      description: "Expressão que resolva pra array.",
-    },
-    {
-      name: "batchSize",
-      label: "Tamanho do lote",
-      type: "number",
-      min: 1,
-      placeholder: "10",
-    },
-  ],
+  dialogSize: "wide",
+  fields: [],
+  customPanel: SplitInBatchesPanel,
+  customPanelOwnsMeta: true,
 };
 
 const wait: NodeConfigSchema = {
   title: "Aguardar",
-  description: "Use exatamente um dos modos abaixo (ms, segundos ou data absoluta).",
-  fields: [
-    { name: "ms", label: "Milissegundos", type: "number", min: 0, placeholder: "500" },
-    { name: "seconds", label: "Segundos", type: "number", min: 0, placeholder: "30" },
-    {
-      name: "until",
-      label: "Até (ISO 8601)",
-      type: "text",
-      placeholder: "2026-06-01T10:00:00Z",
-    },
-  ],
+  dialogSize: "wide",
+  fields: [],
+  customPanel: WaitPanel,
+  customPanelOwnsMeta: true,
 };
 
 const execute_workflow: NodeConfigSchema = {
@@ -267,18 +231,10 @@ const execute_workflow: NodeConfigSchema = {
 // ── Dados ────────────────────────────────────────────────────────────────
 const set_variable: NodeConfigSchema = {
   title: "Variável",
-  description:
-    "Use `variables` (chave/valor) para várias de uma vez, ou `name` + `value` pra uma única.",
-  fields: [
-    { name: "variables", label: "Variáveis (kv)", type: "kv" },
-    { name: "name", label: "Nome (modo único)", type: "text", placeholder: "currentUser" },
-    {
-      name: "value",
-      label: "Valor (modo único)",
-      type: "text",
-      placeholder: "{{ steps.fetch.user }}",
-    },
-  ],
+  dialogSize: "wide",
+  fields: [],
+  customPanel: SetVariablePanel,
+  customPanelOwnsMeta: true,
 };
 
 const DATE_OPS = [
@@ -585,19 +541,15 @@ const ai_chat: NodeConfigSchema = {
   ],
 };
 
+// Painel dedicado (EmbeddingsPanel): provedor (openai/custom OpenAI-compatible),
+// catálogo de modelos com dim, entrada single/batch, teste e histórico.
 const embeddings: NodeConfigSchema = {
   title: "Embeddings",
-  description: "Use `text` para um único embed ou `texts` para batch.",
-  fields: [
-    {
-      name: "model",
-      label: "Modelo",
-      type: "text",
-      placeholder: "text-embedding-3-small",
-    },
-    { name: "text", label: "Texto único", type: "textarea", rows: 3 },
-    { name: "texts", label: "Texts (batch)", type: "stringList" },
-  ],
+  description: "Gera vetores via OpenAI ou qualquer endpoint OpenAI-compatible (Ollama, vLLM, etc).",
+  dialogSize: "wide",
+  fields: [],
+  customPanel: EmbeddingsPanel,
+  customPanelOwnsMeta: true,
 };
 
 // Painel dedicado (VectorStorePanel): seções Operação / Conexão / Teste / Histórico.
@@ -610,64 +562,25 @@ const vector_store: NodeConfigSchema = {
   customPanelOwnsMeta: true,
 };
 
-const CHAT_OPS = [
-  { value: "load", label: "load" },
-  { value: "append", label: "append" },
-];
-
+// Painel dedicado (ChatMemoryPanel): seções Operação / Conexão / Teste / Histórico.
 const chat_memory: NodeConfigSchema = {
   title: "Memória de chat",
+  description: "Persistência de histórico de conversa em Postgres externo.",
   dialogSize: "wide",
-  fields: [
-    {
-      name: "connectionString",
-      label: "Connection string",
-      type: "text",
-      required: true,
-      placeholder: "{{ env.MEMORY_DB_URL }}",
-    },
-    { name: "table", label: "Tabela", type: "text", placeholder: "chat_messages" },
-    { name: "sessionId", label: "Session ID", type: "text", required: true },
-    { name: "operation", label: "Operação", type: "select", required: true, options: CHAT_OPS },
-    {
-      name: "limit",
-      label: "Limite",
-      type: "number",
-      min: 1,
-      placeholder: "20",
-      visibleWhen: (v) => v.operation === "load",
-    },
-    {
-      name: "role",
-      label: "Role",
-      type: "select",
-      options: [
-        { value: "user", label: "user" },
-        { value: "assistant", label: "assistant" },
-        { value: "system", label: "system" },
-      ],
-      visibleWhen: (v) => v.operation === "append",
-    },
-    {
-      name: "content",
-      label: "Conteúdo",
-      type: "textarea",
-      rows: 4,
-      visibleWhen: (v) => v.operation === "append",
-    },
-  ],
+  fields: [],
+  customPanel: ChatMemoryPanel,
+  customPanelOwnsMeta: true,
 };
 
+// Painel dedicado (DocumentLoaderPanel): entrada, chunking com preview visual
+// de overlap, metadata KV, preview real dos chunks, histórico.
 const document_loader: NodeConfigSchema = {
   title: "Document loader",
-  description: "Faz chunking do texto pra alimentar embeddings/vector store.",
+  description: "Chunkifica texto com overlap pra alimentar embeddings/vector store.",
   dialogSize: "wide",
-  fields: [
-    { name: "text", label: "Texto", type: "textarea", required: true, rows: 6 },
-    { name: "chunkSize", label: "Chunk size", type: "number", min: 1, placeholder: "1000" },
-    { name: "chunkOverlap", label: "Chunk overlap", type: "number", min: 0, placeholder: "200" },
-    { name: "metadata", label: "Metadata", type: "json" },
-  ],
+  fields: [],
+  customPanel: DocumentLoaderPanel,
+  customPanelOwnsMeta: true,
 };
 
 // ── Visuais ──────────────────────────────────────────────────────────────

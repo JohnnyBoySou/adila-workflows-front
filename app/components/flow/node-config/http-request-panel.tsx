@@ -22,6 +22,7 @@ import {
   Send,
   Settings2,
   ShieldCheck,
+  Variable,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -56,6 +57,7 @@ import { cn } from "~/lib/utils";
 import { KeyValueEditor } from "./fields";
 import { parseCurlCommand, type ParsedCurl, type ParsedCurlAuth } from "./parse-curl";
 import type { CustomPanelProps } from "./types";
+import { VariableExplorer } from "../variable-explorer";
 
 /* -------------------------------------------------------------------------- */
 /* Tipos do painel                                                             */
@@ -94,6 +96,7 @@ const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"] as const;
 const NO_BODY_METHODS = new Set(["GET", "HEAD"]);
 
 const BASE_SECTIONS = [
+  { id: "variables", label: "Variáveis", icon: Variable },
   { id: "request", label: "Request", icon: Globe },
   { id: "headers", label: "Headers", icon: ListChecks },
   { id: "body", label: "Body", icon: ListChecks },
@@ -213,6 +216,7 @@ export function HttpRequestPanel({ values, onChange, onError, nodeId }: CustomPa
       onValueChange={setSection}
       ariaLabel="Seções de configuração HTTP"
     >
+      {section === "variables" && <VariableExplorer />}
       {section === "request" && (
         <RequestSection
           url={url}
@@ -350,6 +354,16 @@ function RequestSection({
           placeholder="https://api.exemplo.com/recurso"
           className="flex-1"
           spellCheck={false}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={(e) => {
+            e.preventDefault();
+            const expr = e.dataTransfer.getData("text/plain");
+            if (!expr) return;
+            const el = e.currentTarget;
+            const start = el.selectionStart ?? url.length;
+            const end = el.selectionEnd ?? url.length;
+            onUrlChange(url.slice(0, start) + expr + url.slice(end));
+          }}
         />
       </div>
 
@@ -433,7 +447,7 @@ function BodySection({
       </div>
 
       {body.mode === "json" && (
-        <FieldGroup label="JSON body" hint="Objeto ou array — serializado automaticamente.">
+        <FieldGroup label="JSON body" hint="Objeto ou array — serializado automaticamente. Arraste variáveis da aba Variáveis para inserir expressões.">
           <Textarea
             value={
               body.content === undefined
@@ -443,10 +457,21 @@ function BodySection({
                   : safeStringify(body.content)
             }
             onChange={(e) => onChange({ content: e.target.value })}
-            placeholder={'{\n  "name": "{{ input.name }}"\n}'}
+            placeholder={'{\n  "name": "{{ steps[\\"webhook-id\\"].body.name }}"\n}'}
             rows={10}
             spellCheck={false}
             className="font-mono text-xs"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              const expr = e.dataTransfer.getData("text/plain");
+              if (!expr) return;
+              const el = e.currentTarget;
+              const cur = typeof body.content === "string" ? body.content : safeStringify(body.content ?? "");
+              const start = el.selectionStart ?? cur.length;
+              const end = el.selectionEnd ?? cur.length;
+              onChange({ content: cur.slice(0, start) + expr + cur.slice(end) });
+            }}
           />
         </FieldGroup>
       )}

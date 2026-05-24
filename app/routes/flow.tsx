@@ -307,6 +307,10 @@ export default function FlowRoute() {
             workflowId={workflow.id}
             focusedRunId={focusedRunId}
             onFocusedRunHandled={() => setFocusedRunId(null)}
+            onOpenInEditor={(runId) => {
+              setFocusedRunId(runId);
+              setTab("editor");
+            }}
           />
         </div>
         <div className={cn("absolute inset-0", tab === "performance" ? "block" : "hidden")}>

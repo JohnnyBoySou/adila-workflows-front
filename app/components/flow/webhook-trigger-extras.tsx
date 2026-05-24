@@ -34,8 +34,9 @@ import {
 
 import { Button } from "~/components/ui/button";
 import { Badge } from "~/components/ui/badge";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
 import { Textarea } from "~/components/ui/textarea";
+import { Sections } from "~/components/ui/sections";
+import type { SectionItem } from "~/components/ui/sections";
 import { KeyValueEditor } from "./node-config/fields";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
@@ -51,18 +52,11 @@ import { TriggerVersionPicker } from "./trigger-version-picker";
 type Props = {
   workflowId: string;
   nodeId: string;
-  responseMode?: "async" | "sync";
-  responseTimeoutMs?: number;
 };
 
 const ALL_METHODS: WebhookMethod[] = ["POST", "GET", "PUT", "PATCH", "DELETE"];
 
-export function WebhookTriggerExtras({
-  workflowId,
-  nodeId,
-  responseMode,
-  responseTimeoutMs,
-}: Props) {
+export function WebhookTriggerExtras({ workflowId, nodeId }: Props) {
   const queryClient = useQueryClient();
 
   const triggersQuery = useQuery({
@@ -82,8 +76,7 @@ export function WebhookTriggerExtras({
         type: "webhook",
         name: `Webhook ${nodeId.slice(0, 6)}`,
         nodeId,
-        webhookResponseMode: responseMode ?? "async",
-        webhookResponseTimeoutMs: responseTimeoutMs ?? 30_000,
+        webhookResponseMode: "async",
       }),
     onSuccess: invalidate,
   });
@@ -131,10 +124,19 @@ export function WebhookTriggerExtras({
 }
 
 /* -------------------------------------------------------------------------- */
-/* Painel com abas                                                            */
+/* Painel com Sections (sidebar nav + conteúdo)                               */
 /* -------------------------------------------------------------------------- */
 
-type TabKey = "config" | "teste" | "seguranca" | "invocacoes" | "saude";
+type SectionKey = "config" | "resposta" | "teste" | "seguranca" | "invocacoes" | "saude";
+
+const WEBHOOK_SECTIONS: ReadonlyArray<SectionItem<SectionKey>> = [
+  { id: "config", label: "Config", icon: Settings },
+  { id: "resposta", label: "Resposta", icon: RefreshCw },
+  { id: "teste", label: "Teste", icon: Send },
+  { id: "seguranca", label: "Segurança", icon: Shield },
+  { id: "invocacoes", label: "Invocações", icon: History },
+  { id: "saude", label: "Saúde", icon: Activity },
+];
 
 function TriggerActiveTabbed({
   workflowId,
@@ -145,88 +147,48 @@ function TriggerActiveTabbed({
   trigger: Trigger;
   onChanged: () => void;
 }) {
-  const [tab, setTab] = useState<TabKey>("config");
+  const [section, setSection] = useState<SectionKey>("config");
   const url = trigger.webhookToken ? triggersApi.webhookUrl(trigger.webhookToken) : null;
 
   return (
-    <div className="mt-4 space-y-3 rounded-md border border-border bg-muted/20 p-3">
-      <HeaderBar trigger={trigger} />
-
-      <Tabs value={tab} onValueChange={(v) => setTab(v as TabKey)}>
-        <TabsList className="h-8 w-full justify-start">
-          <TabsTrigger value="config" className="gap-1 text-[11px]">
-            <Settings className="size-3.5" /> Config
-          </TabsTrigger>
-          <TabsTrigger value="teste" className="gap-1 text-[11px]">
-            <Send className="size-3.5" /> Teste
-          </TabsTrigger>
-          <TabsTrigger value="seguranca" className="gap-1 text-[11px]">
-            <Shield className="size-3.5" /> Segurança
-          </TabsTrigger>
-          <TabsTrigger value="invocacoes" className="gap-1 text-[11px]">
-            <History className="size-3.5" /> Invocações
-          </TabsTrigger>
-          <TabsTrigger value="saude" className="gap-1 text-[11px]">
-            <Activity className="size-3.5" /> Saúde
-          </TabsTrigger>
-        </TabsList>
-
-        <TabsContent value="config" className="mt-3">
-          <ConfigTab workflowId={workflowId} trigger={trigger} url={url} onChanged={onChanged} />
-        </TabsContent>
-
-        <TabsContent value="teste" className="mt-3">
-          {url && trigger.enabled ? (
-            <WebhookTester
-              url={url}
-              mode={trigger.webhookResponseMode ?? "async"}
-              allowedMethods={trigger.allowedMethods}
-              hmacEnabled={Boolean(trigger.hmacSecret)}
-            />
-          ) : (
-            <EmptyHint>
-              Ative o webhook na aba <strong>Config</strong> antes de testar.
-            </EmptyHint>
-          )}
-        </TabsContent>
-
-        <TabsContent value="seguranca" className="mt-3">
-          <SecurityTab workflowId={workflowId} trigger={trigger} onChanged={onChanged} />
-        </TabsContent>
-
-        <TabsContent value="invocacoes" className="mt-3">
-          <InvocationsTab workflowId={workflowId} triggerId={trigger.id} />
-        </TabsContent>
-
-        <TabsContent value="saude" className="mt-3">
-          <HealthTab workflowId={workflowId} triggerId={trigger.id} />
-        </TabsContent>
-      </Tabs>
-    </div>
-  );
-}
-
-function HeaderBar({ trigger }: { trigger: Trigger }) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span
-        className={cn("size-2 rounded-full", trigger.enabled ? "bg-emerald-500" : "bg-muted")}
-        aria-hidden
-      />
-      <span className="font-medium">
-        {trigger.enabled ? "Webhook ativo" : "Webhook desabilitado"}
-      </span>
-      {trigger.hmacSecret && (
-        <Badge variant="outline" className="h-5 gap-1 px-1.5 text-[10px]">
-          <Shield className="size-3" /> HMAC
-        </Badge>
+    <Sections
+      sections={WEBHOOK_SECTIONS}
+      value={section}
+      onValueChange={setSection}
+      ariaLabel="Seções do webhook"
+      className="min-h-[320px]"
+      navClassName="w-36"
+    >
+      {section === "config" && (
+        <ConfigTab workflowId={workflowId} trigger={trigger} url={url} onChanged={onChanged} />
       )}
-      <span className="ml-auto text-muted-foreground">
-        {trigger.lastTriggeredAt
-          ? `Disparado por último em ${new Date(trigger.lastTriggeredAt).toLocaleString("pt-BR")}`
-          : "Nunca disparado"}
-      </span>
-    </div>
+      {section === "resposta" && (
+        <ResponseTab workflowId={workflowId} trigger={trigger} onChanged={onChanged} />
+      )}
+      {section === "teste" && (
+        url && trigger.enabled ? (
+          <WebhookTester
+            url={url}
+            mode={trigger.webhookResponseMode ?? "async"}
+            allowedMethods={trigger.allowedMethods}
+            hmacEnabled={Boolean(trigger.hmacSecret)}
+          />
+        ) : (
+          <EmptyHint>
+            Ative o webhook na seção <strong>Config</strong> antes de testar.
+          </EmptyHint>
+        )
+      )}
+      {section === "seguranca" && (
+        <SecurityTab workflowId={workflowId} trigger={trigger} onChanged={onChanged} />
+      )}
+      {section === "invocacoes" && (
+        <InvocationsTab workflowId={workflowId} triggerId={trigger.id} />
+      )}
+      {section === "saude" && (
+        <HealthTab workflowId={workflowId} triggerId={trigger.id} />
+      )}
+    </Sections>
   );
 }
 
@@ -293,28 +255,45 @@ function ConfigTab({
     ? `curl -X ${allowed[0]} '${url}' \\\n  -H 'Content-Type: application/json' \\\n  -d '{"hello":"world"}'`
     : "—";
 
+  const METHOD_COLORS: Record<WebhookMethod, string> = {
+    POST:   "bg-emerald-500/10 text-emerald-700 border-emerald-500/30 dark:text-emerald-400",
+    GET:    "bg-sky-500/10     text-sky-700     border-sky-500/30     dark:text-sky-400",
+    PUT:    "bg-amber-500/10   text-amber-700   border-amber-500/30   dark:text-amber-400",
+    PATCH:  "bg-violet-500/10  text-violet-700  border-violet-500/30  dark:text-violet-400",
+    DELETE: "bg-rose-500/10    text-rose-700    border-rose-500/30    dark:text-rose-400",
+  };
+
   return (
-    <div className="space-y-3">
+    <div className="space-y-5">
+      {/* URL pública */}
       {url && (
-        <div className="flex items-center gap-2 rounded-md border border-border bg-background px-2 py-1.5">
-          <code className="flex-1 truncate font-mono text-[11px]">{url}</code>
-          <Button
-            size="icon-sm"
-            variant="ghost"
-            onClick={copy}
-            aria-label="Copiar URL"
-            title="Copiar URL"
-          >
-            {copied ? <Check className="size-4 text-emerald-500" /> : <Copy className="size-4" />}
-          </Button>
+        <div className="space-y-1.5">
+          <p className="text-xs font-semibold text-foreground">URL pública</p>
+          <div className="flex items-center gap-2 rounded-md border border-border bg-muted/40 px-3 py-2">
+            <code className="flex-1 truncate font-mono text-[11px] text-muted-foreground">{url}</code>
+            <button
+              type="button"
+              onClick={copy}
+              aria-label="Copiar URL"
+              className="shrink-0 text-muted-foreground transition-colors hover:text-foreground"
+            >
+              {copied
+                ? <Check className="size-3.5 text-emerald-500" />
+                : <Copy className="size-3.5" />}
+            </button>
+          </div>
         </div>
       )}
 
-      <div className="space-y-1.5">
-        <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          Métodos HTTP aceitos
-        </label>
-        <div className="flex flex-wrap gap-1.5">
+      {/* Métodos HTTP */}
+      <div className="space-y-2">
+        <div>
+          <p className="text-xs font-semibold text-foreground">Métodos aceitos</p>
+          <p className="text-[11px] text-muted-foreground">
+            Clique para ativar ou desativar. Requisições fora da seleção recebem <code className="rounded bg-muted px-1">405</code>.
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
           {ALL_METHODS.map((m) => {
             const active = allowed.includes(m);
             return (
@@ -324,27 +303,26 @@ function ConfigTab({
                 onClick={() => toggleMethod(m)}
                 disabled={methodsMutation.isPending}
                 className={cn(
-                  "rounded-md border px-2 py-0.5 font-mono text-[10px] transition-colors",
+                  "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 font-mono text-[11px] font-medium transition-all",
                   active
-                    ? "border-primary bg-primary/10 text-primary"
-                    : "border-border bg-background text-muted-foreground hover:border-primary/40",
+                    ? METHOD_COLORS[m]
+                    : "border-border bg-background text-muted-foreground opacity-40 hover:opacity-70",
                 )}
               >
+                {active && <span className="size-1.5 rounded-full bg-current" />}
                 {m}
               </button>
             );
           })}
         </div>
-        <p className="text-[10px] text-muted-foreground">
-          Requisições com método fora dessa lista recebem <code>405</code>.
-        </p>
       </div>
 
-      <details className="rounded-md border border-border bg-background/60">
-        <summary className="cursor-pointer select-none px-2 py-1.5 text-[11px] font-medium text-muted-foreground hover:bg-muted/40">
-          Exemplo de chamada (curl)
+      {/* curl de exemplo */}
+      <details className="rounded-md border border-border bg-muted/30">
+        <summary className="cursor-pointer select-none px-3 py-2 text-[11px] font-medium text-muted-foreground hover:text-foreground">
+          Ver exemplo cURL
         </summary>
-        <pre className="overflow-x-auto whitespace-pre-wrap break-all px-2 py-1.5 font-mono text-[10px] leading-relaxed">
+        <pre className="overflow-x-auto whitespace-pre-wrap break-all border-t border-border px-3 py-2 font-mono text-[10px] leading-relaxed text-muted-foreground">
           {curl}
         </pre>
       </details>
@@ -378,6 +356,84 @@ function ConfigTab({
           Remover webhook
         </Button>
       </div>
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Seção Resposta — modo async/sync e timeout                                 */
+/* -------------------------------------------------------------------------- */
+
+function ResponseTab({
+  workflowId,
+  trigger,
+  onChanged,
+}: {
+  workflowId: string;
+  trigger: Trigger;
+  onChanged: () => void;
+}) {
+  const mode = trigger.webhookResponseMode ?? "async";
+
+  return (
+    <div className="space-y-4">
+      <div className="space-y-1.5">
+        <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Modo de resposta
+        </label>
+        <div className="flex gap-1.5">
+          {(["async", "sync"] as const).map((m) => (
+            <button
+              key={m}
+              type="button"
+              onClick={() =>
+                triggersApi
+                  .update(workflowId, trigger.id, { webhookResponseMode: m })
+                  .then(onChanged)
+              }
+              className={cn(
+                "rounded-md border px-3 py-1 text-[11px] font-medium transition-colors",
+                mode === m
+                  ? "border-primary bg-primary/10 text-primary"
+                  : "border-border bg-background text-muted-foreground hover:border-primary/40",
+              )}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-muted-foreground">
+          {mode === "sync"
+            ? "Sync — aguarda o run terminar e devolve a resposta do workflow ao chamador."
+            : "Async — devolve 202 com o runId imediatamente e executa em background."}
+        </p>
+      </div>
+
+      {mode === "sync" && (
+        <div className="space-y-1.5">
+          <label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Timeout (ms)
+          </label>
+          <input
+            type="number"
+            min={1000}
+            max={120000}
+            step={1000}
+            defaultValue={trigger.webhookResponseTimeoutMs ?? 30000}
+            onBlur={(e) => {
+              const v = Number(e.target.value);
+              if (v > 0)
+                triggersApi
+                  .update(workflowId, trigger.id, { webhookResponseTimeoutMs: v })
+                  .then(onChanged);
+            }}
+            className="w-32 rounded-md border border-border bg-background px-2 py-1 font-mono text-[11px]"
+          />
+          <p className="text-[10px] text-muted-foreground">
+            Se o run não terminar dentro desse tempo, o webhook devolve 504.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

@@ -3,6 +3,7 @@ import {
   Handle,
   NodeToolbar,
   Position,
+  useNodeConnections,
   useReactFlow,
   type Node,
   type NodeProps,
@@ -62,6 +63,8 @@ export type WorkflowNodeData = {
   locked?: boolean;
   /** Comentário/anotação anexada ao nó. */
   comment?: string;
+  /** Override do user pra cor do ícone (hex). Sobrepõe o default do nodeType/variant. */
+  iconColor?: string;
 };
 
 export type WorkflowNode = Node<WorkflowNodeData, "workflow">;
@@ -85,10 +88,20 @@ const VARIANT_META: Record<
 function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) {
   const variant = data.variant ?? "action";
   const meta = VARIANT_META[variant];
+  // Triggers só emitem — sem handle de entrada. Visual distinto: lado esquerdo
+  // arredondado em pílula (stadium) pra leitura imediata de "começa aqui".
+  const isTrigger = variant === "trigger";
   // Ícone específico do nodeType tem prioridade; cai no ícone genérico do variant.
   const nodeIconEntry = data.nodeType ? NODE_ICON_MAP[data.nodeType] : undefined;
   const Icon = nodeIconEntry?.icon ?? meta.icon;
   const iconColor = nodeIconEntry?.color ?? meta.iconColor;
+  // Override custom do usuário (hex) — aplicado via inline style; quando
+  // ausente, mantém a classe tailwind padrão do tipo/variant.
+  const customIconColor = data.iconColor;
+  // Conta edges saindo deste node — quando >1 marcamos o handle como
+  // "fan-out" pra leitura rápida do fluxo no canvas.
+  const outgoing = useNodeConnections({ id, handleType: "source" });
+  const fanOut = outgoing.length > 1;
   // Seletor fino — só este nó re-renderiza quando o status dele muda.
   const executionStatus = useExecutionStore(
     (s) => (s as unknown as { stepsByNodeId: Record<string, { status: NodeExecutionStatus }> }).stepsByNodeId[id]?.status,
@@ -154,6 +167,7 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
         "w-56 gap-2 py-3 transition-shadow !overflow-visible",
         selected && "ring-2 ring-ring",
         data.disabled && "opacity-50",
+        isTrigger && "rounded-l-[1.75rem]",
         executionRing,
       )}
     >
@@ -234,11 +248,13 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
         </div>
       )}
 
-      <Handle
-        type="target"
-        position={Position.Left}
-        className="!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4"
-      />
+      {!isTrigger && (
+        <Handle
+          type="target"
+          position={Position.Left}
+          className="!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4"
+        />
+      )}
 
       {/* Lock indicator */}
       {data.locked && (
@@ -258,14 +274,23 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
           <Pin className="size-2.5" />
         </span>
       )}
-      <CardHeader className="flex flex-row items-center gap-2 px-3">
-        <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", meta.iconBg)}>
-          <Icon className={cn("size-4", iconColor)} />
+      <CardHeader className={cn("flex flex-row items-center gap-2 px-3", isTrigger && "pl-6")}>
+        <span
+          className={cn(
+            "grid size-7 shrink-0 place-items-center rounded-md",
+            !customIconColor && meta.iconBg,
+          )}
+          style={customIconColor ? { backgroundColor: `${customIconColor}26` } : undefined}
+        >
+          <Icon
+            className={cn("size-4", !customIconColor && iconColor)}
+            style={customIconColor ? { color: customIconColor } : undefined}
+          />
         </span>
         <CardTitle className="text-sm">{data.title}</CardTitle>
       </CardHeader>
       {data.description ? (
-        <CardContent className="px-3 text-xs text-muted-foreground">{data.description}</CardContent>
+        <CardContent className={cn("px-3 text-xs text-muted-foreground", isTrigger && "pl-6")}>{data.description}</CardContent>
       ) : null}
 
       {/* Comment indicator (when comment exists and popover is closed) */}
@@ -281,8 +306,20 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
       <Handle
         type="source"
         position={Position.Right}
-        className="!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4"
-      />
+        className={cn(
+          "!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4",
+          fanOut && "!size-3.5 !bg-amber-500 !ring-2 !ring-amber-500/30",
+        )}
+      >
+        {fanOut && (
+          <span
+            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[8px] font-bold leading-none text-background"
+            aria-hidden
+          >
+            {outgoing.length}
+          </span>
+        )}
+      </Handle>
     </Card>
   );
 }
