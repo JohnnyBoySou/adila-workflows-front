@@ -26,6 +26,7 @@ export function meta({}: Route.MetaArgs) {
 export default function AuthRoute() {
   const [searchParams] = useSearchParams();
   const invitationId = searchParams.get("invitation")?.trim() || null;
+  const nextPath = sanitizeNext(searchParams.get("next"));
   const { data: session, isPending: sessionPending } = useSession();
   const showGuestInviteBanner = !!invitationId && !sessionPending && !session?.user;
 
@@ -50,10 +51,10 @@ export default function AuthRoute() {
             </TabsList>
 
             <TabsContent value="login" className="mt-4">
-              <LoginCard invitationId={invitationId} />
+              <LoginCard invitationId={invitationId} nextPath={nextPath} />
             </TabsContent>
             <TabsContent value="signup" className="mt-4">
-              <SignupCard invitationId={invitationId} />
+              <SignupCard invitationId={invitationId} nextPath={nextPath} />
             </TabsContent>
           </Tabs>
 
@@ -108,7 +109,13 @@ export default function AuthRoute() {
   );
 }
 
-function LoginCard({ invitationId }: { invitationId: string | null }) {
+function LoginCard({
+  invitationId,
+  nextPath,
+}: {
+  invitationId: string | null;
+  nextPath: string | null;
+}) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,7 +137,7 @@ function LoginCard({ invitationId }: { invitationId: string | null }) {
       setLoading(false);
       return;
     }
-    const redirectError = await finishAuthRedirect(navigate, invitationId);
+    const redirectError = await finishAuthRedirect(navigate, invitationId, nextPath);
     if (redirectError) setError(redirectError);
     setLoading(false);
   }
@@ -185,7 +192,13 @@ function LoginCard({ invitationId }: { invitationId: string | null }) {
   );
 }
 
-function SignupCard({ invitationId }: { invitationId: string | null }) {
+function SignupCard({
+  invitationId,
+  nextPath,
+}: {
+  invitationId: string | null;
+  nextPath: string | null;
+}) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -210,7 +223,7 @@ function SignupCard({ invitationId }: { invitationId: string | null }) {
       setLoading(false);
       return;
     }
-    const redirectError = await finishAuthRedirect(navigate, invitationId);
+    const redirectError = await finishAuthRedirect(navigate, invitationId, nextPath);
     if (redirectError) setError(redirectError);
     setLoading(false);
   }
@@ -265,15 +278,26 @@ function SignupCard({ invitationId }: { invitationId: string | null }) {
   );
 }
 
-/** Após login/cadastro, aceita convite pendente (se houver) e vai ao dashboard. */
+/** Após login/cadastro, aceita convite pendente (se houver) e vai ao destino. */
 async function finishAuthRedirect(
   navigate: ReturnType<typeof useNavigate>,
   invitationId: string | null,
+  nextPath: string | null,
 ): Promise<string | null> {
   if (invitationId) {
     const result = await acceptOrganizationInvitation(invitationId);
     if (!result.ok) return result.message;
   }
-  navigate("/dashboard", { replace: true });
+  navigate(nextPath ?? "/dashboard", { replace: true });
   return null;
+}
+
+/**
+ * Aceita só paths relativos same-origin pra evitar open-redirect.
+ * Exige começar com `/` e proíbe `//` (que vira protocol-relative).
+ */
+function sanitizeNext(raw: string | null): string | null {
+  if (!raw) return null;
+  if (!raw.startsWith("/") || raw.startsWith("//")) return null;
+  return raw;
 }

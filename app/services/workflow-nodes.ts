@@ -219,3 +219,49 @@ export function dryRunSetVariable(
     ),
   );
 }
+
+export type DryRunCtxInput = {
+  config: Record<string, unknown>;
+  input?: Record<string, unknown>;
+  vars?: Record<string, unknown>;
+  steps?: Record<string, Record<string, unknown>>;
+};
+
+export function dryRunRespond(
+  workflowId: string,
+  nodeId: string,
+  body: DryRunCtxInput,
+): Promise<DryRunResponse> {
+  return unwrap(
+    $fetch<DryRunResponse>(
+      `/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/dry-run-respond`,
+      { method: "POST", body },
+    ),
+  );
+}
+
+export function dryRunAggregate(
+  workflowId: string,
+  nodeId: string,
+  body: DryRunCtxInput,
+): Promise<DryRunResponse> {
+  return unwrap(
+    $fetch<DryRunResponse>(
+      `/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/dry-run-aggregate`,
+      { method: "POST", body },
+    ),
+  );
+}
+
+export function dryRunDate(
+  workflowId: string,
+  nodeId: string,
+  body: DryRunCtxInput,
+): Promise<DryRunResponse> {
+  return unwrap(
+    $fetch<DryRunResponse>(
+      `/workflows/${workflowId}/nodes/${encodeURIComponent(nodeId)}/dry-run-date`,
+      { method: "POST", body },
+    ),
+  );
+}

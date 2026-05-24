@@ -21,6 +21,9 @@ import { SwitchPanel } from "./switch-panel";
 import { SplitInBatchesPanel } from "./split-in-batches-panel";
 import { WaitPanel } from "./wait-panel";
 import { SetVariablePanel } from "./set-variable-panel";
+import { RespondToWebhookPanel } from "./respond-to-webhook-panel";
+import { AggregatePanel } from "./aggregate-panel";
+import { DateTimePanel } from "./date-time-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
@@ -150,25 +153,10 @@ const code: NodeConfigSchema = {
 
 const respond_to_webhook: NodeConfigSchema = {
   title: "Responder webhook",
-  description: "Envia a resposta HTTP custom em workflows disparados via webhook síncrono.",
   dialogSize: "wide",
-  fields: [
-    {
-      name: "status",
-      label: "Status code",
-      type: "number",
-      min: 100,
-      max: 599,
-      placeholder: "200",
-    },
-    { name: "headers", label: "Headers", type: "kv" },
-    {
-      name: "body",
-      label: "Body",
-      type: "json",
-      description: "Pode ser objeto, string ou null.",
-    },
-  ],
+  fields: [],
+  customPanel: RespondToWebhookPanel,
+  customPanelOwnsMeta: true,
 };
 
 // ── Lógica ───────────────────────────────────────────────────────────────
@@ -237,69 +225,12 @@ const set_variable: NodeConfigSchema = {
   customPanelOwnsMeta: true,
 };
 
-const DATE_OPS = [
-  { value: "now", label: "now" },
-  { value: "parse", label: "parse" },
-  { value: "format", label: "format" },
-  { value: "add", label: "add" },
-  { value: "diff", label: "diff" },
-];
-
-const DATE_UNITS = [
-  { value: "ms", label: "milissegundos" },
-  { value: "seconds", label: "segundos" },
-  { value: "minutes", label: "minutos" },
-  { value: "hours", label: "horas" },
-  { value: "days", label: "dias" },
-];
-
 const date_time: NodeConfigSchema = {
   title: "Data e hora",
-  fields: [
-    { name: "operation", label: "Operação", type: "select", required: true, options: DATE_OPS },
-    {
-      name: "value",
-      label: "Valor",
-      type: "text",
-      placeholder: "2026-05-22 ou {{ input.date }}",
-      visibleWhen: (v) =>
-        v.operation === "parse" || v.operation === "format" || v.operation === "add",
-    },
-    {
-      name: "format",
-      label: "Formato",
-      type: "text",
-      placeholder: "YYYY-MM-DD HH:mm:ss",
-      visibleWhen: (v) => v.operation === "format",
-    },
-    {
-      name: "amount",
-      label: "Quantidade",
-      type: "number",
-      visibleWhen: (v) => v.operation === "add",
-    },
-    {
-      name: "unit",
-      label: "Unidade",
-      type: "select",
-      options: DATE_UNITS,
-      visibleWhen: (v) => v.operation === "add" || v.operation === "diff",
-    },
-    {
-      name: "from",
-      label: "De",
-      type: "text",
-      placeholder: "{{ input.start }}",
-      visibleWhen: (v) => v.operation === "diff",
-    },
-    {
-      name: "to",
-      label: "Até",
-      type: "text",
-      placeholder: "{{ input.end }}",
-      visibleWhen: (v) => v.operation === "diff",
-    },
-  ],
+  dialogSize: "wide",
+  fields: [],
+  customPanel: DateTimePanel,
+  customPanelOwnsMeta: true,
 };
 
 const CRYPTO_OPS = [
@@ -457,51 +388,12 @@ const item_lists: NodeConfigSchema = {
   ],
 };
 
-const AGG_OPS = [
-  { value: "count", label: "count" },
-  { value: "sum", label: "sum" },
-  { value: "avg", label: "avg" },
-  { value: "min", label: "min" },
-  { value: "max", label: "max" },
-  { value: "group_by", label: "group_by" },
-];
-
 const aggregate: NodeConfigSchema = {
   title: "Agregação",
-  fields: [
-    { name: "operation", label: "Operação", type: "select", required: true, options: AGG_OPS },
-    {
-      name: "items",
-      label: "Items (template)",
-      type: "text",
-      placeholder: "{{ steps.query.rows }}",
-    },
-    {
-      name: "field",
-      label: "Campo",
-      type: "text",
-      placeholder: "amount",
-      visibleWhen: (v) =>
-        v.operation === "sum" ||
-        v.operation === "avg" ||
-        v.operation === "min" ||
-        v.operation === "max",
-    },
-    {
-      name: "by",
-      label: "Agrupar por (campo)",
-      type: "text",
-      placeholder: "status",
-      visibleWhen: (v) => v.operation === "group_by",
-    },
-    {
-      name: "aggs",
-      label: "Agregações adicionais",
-      type: "json",
-      placeholder: '{ "total": { "op": "sum", "field": "amount" } }',
-      visibleWhen: (v) => v.operation === "group_by",
-    },
-  ],
+  dialogSize: "wide",
+  fields: [],
+  customPanel: AggregatePanel,
+  customPanelOwnsMeta: true,
 };
 
 // ── IA ───────────────────────────────────────────────────────────────────

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Link, useParams } from "react-router";
+import { Link, Navigate, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
@@ -56,7 +56,7 @@ export default function FlowRoute() {
   const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
 
-  const { data: sessionData } = useSession();
+  const { data: sessionData, isPending: sessionPending } = useSession();
   const collabUser = sessionData?.user
     ? {
         id: sessionData.user.id,
@@ -273,6 +273,14 @@ export default function FlowRoute() {
 
   // ── Estados de carregamento / erro ────────────────────────────────────
   if (!id) return <NotFoundState />;
+  // Sem sessão → manda pro login antes de tentar buscar o workflow (que
+  // retornaria 401 e cairia no handler global, mas o redirect direto evita
+  // o flash de "não encontrado" quando o usuário cola uma URL profunda).
+  if (sessionPending) return <LoadingState />;
+  if (!sessionData?.session) {
+    const next = `/flow/${id}`;
+    return <Navigate to={`/auth?next=${encodeURIComponent(next)}`} replace />;
+  }
   if (workflowQuery.isPending) return <LoadingState />;
   if (workflowQuery.error || !workflowQuery.data) return <NotFoundState />;
 
