@@ -33,6 +33,16 @@ type UseCollaborationOptions = {
   enabled?: boolean;
   /** Disparado quando outro cliente envia uma patch yjs.update. */
   onYjsUpdate?: (updateBase64: string) => void;
+  /**
+   * Eventos de comentário broadcasted pela sala. Use pra invalidar o cache
+   * da query de comments, mostrar toast de menção, etc.
+   */
+  onCommentEvent?: (
+    event: Extract<
+      AwarenessEvent,
+      { type: "comment.created" } | { type: "comment.updated" } | { type: "comment.deleted" }
+    >,
+  ) => void;
 };
 
 type Status = "idle" | "connecting" | "online" | "offline";
@@ -52,6 +62,7 @@ export function useCollaboration({
   user,
   enabled = true,
   onYjsUpdate,
+  onCommentEvent,
 }: UseCollaborationOptions) {
   // Mantém a referência mais recente do handler sem reabrir o WS a cada
   // re-render do parent.
@@ -59,6 +70,10 @@ export function useCollaboration({
   useEffect(() => {
     onYjsUpdateRef.current = onYjsUpdate;
   }, [onYjsUpdate]);
+  const commentHandlerRef = useRef(onCommentEvent);
+  useEffect(() => {
+    commentHandlerRef.current = onCommentEvent;
+  }, [onCommentEvent]);
 
   const [status, setStatus] = useState<Status>("idle");
   const [others, setOthers] = useState<Map<string, RemotePresence>>(() => new Map());
@@ -69,6 +84,7 @@ export function useCollaboration({
   const attemptRef = useRef(0);
   const lastSentCursorRef = useRef<{ at: number; x: number; y: number }>({ at: 0, x: 0, y: 0 });
   const lastSelectionRef = useRef<string | undefined>(undefined);
+  const lastGrabbedRef = useRef<string | undefined>(undefined);
   const lastViewportRef = useRef<Viewport | undefined>(undefined);
 
   const userId = user?.id;
@@ -96,11 +112,40 @@ export function useCollaboration({
         userId,
         cursor,
         ...(lastSelectionRef.current && { selectedNodeId: lastSelectionRef.current }),
+        ...(lastGrabbedRef.current && { grabbedNodeId: lastGrabbedRef.current }),
         ...(lastViewportRef.current && { viewport: lastViewportRef.current }),
       });
     },
     [send, userId],
   );
+
+  const sendGrab = useCallback(
+    (nodeId: string) => {
+      if (!userId) return;
+      lastGrabbedRef.current = nodeId;
+      send({
+        type: "node.selected",
+        userId,
+        cursor: { x: lastSentCursorRef.current.x, y: lastSentCursorRef.current.y },
+        grabbedNodeId: nodeId,
+        ...(lastSelectionRef.current && { selectedNodeId: lastSelectionRef.current }),
+      });
+    },
+    [send, userId],
+  );
+
+  const sendRelease = useCallback(() => {
+    if (!userId) return;
+    lastGrabbedRef.current = undefined;
+    send({
+      type: "node.selected",
+      userId,
+      cursor: { x: lastSentCursorRef.current.x, y: lastSentCursorRef.current.y },
+      // "" sinaliza release explícito ao server.
+      grabbedNodeId: "",
+      ...(lastSelectionRef.current && { selectedNodeId: lastSelectionRef.current }),
+    });
+  }, [send, userId]);
 
   const sendSelection = useCallback(
     (nodeId: string | undefined) => {
@@ -263,7 +308,17 @@ export function useCollaboration({
           return;
         }
 
+        if (
+          parsed.type === "comment.created" ||
+          parsed.type === "comment.updated" ||
+          parsed.type === "comment.deleted"
+        ) {
+          commentHandlerRef.current?.(parsed);
+          return;
+        }
+
         // Os demais eventos carregam `presence`.
+        if (!("presence" in parsed)) return;
         const p = parsed.presence;
         if (!p || p.userId === userId) return;
         setOthers((prev) => {
@@ -301,11 +356,24 @@ export function useCollaboration({
 
   const othersArray = useMemo(() => Array.from(others.values()), [others]);
 
+  // Map<nodeId, RemotePresence> dos nodes lockados por outros usuários.
+  // Consumido pelo canvas pra bloquear interação local + mostrar overlay.
+  const nodeLocks = useMemo(() => {
+    const map = new Map<string, RemotePresence>();
+    for (const p of othersArray) {
+      if (p.grabbedNodeId) map.set(p.grabbedNodeId, p);
+    }
+    return map;
+  }, [othersArray]);
+
   return {
     status,
     others: othersArray,
+    nodeLocks,
     sendCursor,
     sendSelection,
+    sendGrab,
+    sendRelease,
     sendViewport,
     sendYjsUpdate,
   };

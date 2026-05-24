@@ -4,10 +4,13 @@ import {
   Check,
   ChevronLeft,
   Database,
+  Eye,
+  EyeOff,
   History,
   Info,
   Loader2,
   PenLine,
+  PinOff,
   Play,
   Save,
   Tag,
@@ -43,6 +46,13 @@ type FlowTopBarProps = {
   lastSavedAt?: number | null;
   /** Mostra um indicador pulsante na aba "Execuções" quando há run em curso. */
   hasActiveRun?: boolean;
+  /** Quantidade de nós com output pinado neste workflow. */
+  pinnedCount?: number;
+  /** Limpa todos os pins do workflow. Só renderiza o botão se passado e pinnedCount > 0. */
+  onClearPins?: () => void;
+  /** Modo "inspector sempre-ligado" — qualquer click num nó abre o inspector lateral. */
+  inspectorMode?: boolean;
+  onToggleInspectorMode?: () => void;
 };
 
 const timeFormatter = new Intl.DateTimeFormat("pt-BR", {
@@ -68,6 +78,10 @@ export function FlowTopBar({
   publishState = "idle",
   lastSavedAt,
   hasActiveRun = false,
+  pinnedCount = 0,
+  onClearPins,
+  inspectorMode = false,
+  onToggleInspectorMode,
 }: FlowTopBarProps) {
   const dirty = saveState === "dirty";
   const saving = saveState === "saving";
@@ -101,6 +115,25 @@ export function FlowTopBar({
         >
           <Info className="size-4" />
         </Button>
+
+        {onToggleInspectorMode && (
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            className={cn("rounded-full", inspectorMode && "text-sky-600")}
+            onClick={onToggleInspectorMode}
+            aria-label={
+              inspectorMode ? "Desligar inspector automático" : "Ligar inspector automático"
+            }
+            title={
+              inspectorMode
+                ? "Inspector automático: ON — clique num nó pra ver execução"
+                : "Inspector automático: OFF"
+            }
+          >
+            {inspectorMode ? <Eye className="size-4" /> : <EyeOff className="size-4" />}
+          </Button>
+        )}
 
         {onConnectionsClick && (
           <Button
@@ -156,6 +189,35 @@ export function FlowTopBar({
         </Tabs>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {onClearPins && pinnedCount > 0 && (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon-sm"
+                  className="relative rounded-full text-amber-600"
+                  onClick={onClearPins}
+                  aria-label={`Limpar ${pinnedCount} pin(s)`}
+                >
+                  <PinOff className="size-4" />
+                  <span
+                    aria-hidden
+                    className="absolute -right-0.5 -top-0.5 grid min-w-4 place-items-center rounded-full bg-amber-500 px-1 text-[9px] font-semibold leading-none text-white"
+                  >
+                    {pinnedCount}
+                  </span>
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                {pinnedCount === 1
+                  ? "1 nó pinado — clique para limpar"
+                  : `${pinnedCount} nós pinados — clique para limpar`}
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        )}
 
         <TooltipProvider>
           <Tooltip>

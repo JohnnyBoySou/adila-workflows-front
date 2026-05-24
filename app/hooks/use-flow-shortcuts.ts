@@ -155,6 +155,14 @@ export function useFlowShortcuts({
   // dependência reativa no hook (handlers só rodam sob tecla).
   useHotkeys("v", () => useFlowStore.getState().setTool("select"), { preventDefault: true });
   useHotkeys("h", () => useFlowStore.getState().setTool("pan"), { preventDefault: true });
+  useHotkeys(
+    "c",
+    () => {
+      const s = useFlowStore.getState();
+      s.setTool(s.tool === "comment" ? "select" : "comment");
+    },
+    { preventDefault: true },
+  );
 
   // Create
   useHotkeys("n", () => useFlowStore.getState().setLibraryOpen(true), { preventDefault: true });

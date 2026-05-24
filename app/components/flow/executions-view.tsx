@@ -8,6 +8,9 @@ import {
   ChevronRight,
   Clock,
   Loader2,
+  Pencil,
+  Pin,
+  PinOff,
   PlayCircle,
   RefreshCw,
   Workflow as WorkflowIcon,
@@ -20,6 +23,8 @@ import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
 import * as runsApi from "~/services/runs";
 import type { RunStatus, RunStep, WorkflowRun } from "~/services/runs";
+import { pinnedDataApi, useIsPinned } from "~/stores/pinned-data";
+import { WORKFLOW_NODE_PIN_EDIT_EVENT } from "./pin-editor-dialog";
 import { subscribeToRunEvents } from "~/services/run-events";
 import { CopyJsonButton, HighlightedJson } from "./highlighted-json";
 import { useExecutionStore } from "~/stores/execution";
@@ -483,7 +488,7 @@ function RunDetailPanel({
           </div>
         )}
 
-        <StepsSection steps={steps} run={run} />
+        <StepsSection steps={steps} run={run} workflowId={workflowId} />
 
         {run.error && (
           <div className="mt-4 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs">
@@ -512,7 +517,15 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
  * local — não vale persistir entre sessões; é mais UX-driven do que
  * preferência durável.
  */
-function StepsSection({ steps, run }: { steps: RunStep[]; run: WorkflowRun }) {
+function StepsSection({
+  steps,
+  run,
+  workflowId,
+}: {
+  steps: RunStep[];
+  run: WorkflowRun;
+  workflowId: string;
+}) {
   const sorted = [...steps].toSorted((a, b) => a.index - b.index);
 
   if (steps.length === 0) {
@@ -540,7 +553,7 @@ function StepsSection({ steps, run }: { steps: RunStep[]; run: WorkflowRun }) {
         </h4>
         <ol className="space-y-1.5">
           {sorted.map((step) => (
-            <StepRow key={step.id} step={step} />
+            <StepRow key={step.id} step={step} workflowId={workflowId} />
           ))}
         </ol>
       </div>
@@ -675,7 +688,7 @@ function formatMs(ms: number): string {
   return `${Math.floor(ms / 60_000)}m ${Math.floor((ms % 60_000) / 1000)}s`;
 }
 
-function StepRow({ step }: { step: RunStep }) {
+function StepRow({ step, workflowId }: { step: RunStep; workflowId: string }) {
   const statusKey: RunStatus =
     step.status === "running" ? "running" : step.status === "success" ? "success" : "failed";
   const meta = STATUS_META[statusKey];
@@ -683,6 +696,17 @@ function StepRow({ step }: { step: RunStep }) {
   const [expanded, setExpanded] = useState(false);
   const hasPayload = step.output !== null || step.error !== null;
   const ChevronIcon = expanded ? ChevronDown : ChevronRight;
+  const isPinned = useIsPinned(workflowId, step.nodeId);
+  const canPin = step.status === "success" && step.output !== null;
+
+  function togglePin(e: React.MouseEvent) {
+    e.stopPropagation();
+    if (isPinned) {
+      pinnedDataApi.remove(workflowId, step.nodeId);
+    } else if (step.output) {
+      pinnedDataApi.set(workflowId, step.nodeId, step.output);
+    }
+  }
 
   return (
     <li className="rounded-md border border-border bg-background text-sm">
@@ -710,6 +734,61 @@ function StepRow({ step }: { step: RunStep }) {
         <span className="ml-auto tabular-nums text-xs text-muted-foreground">
           {step.durationMs !== null ? `${step.durationMs}ms` : "—"}
         </span>
+        {canPin && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={togglePin}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                togglePin(e as unknown as React.MouseEvent);
+              }
+            }}
+            aria-label={isPinned ? "Despinar output deste nó" : "Pinar output deste nó"}
+            title={
+              isPinned
+                ? "Output pinado — clique para despinar"
+                : "Pinar output (próximos runs pulam este nó)"
+            }
+            className={cn(
+              "inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-muted hover:text-foreground",
+              isPinned && "text-amber-500 hover:text-amber-600",
+            )}
+          >
+            {isPinned ? <PinOff className="size-3.5" /> : <Pin className="size-3.5" />}
+          </span>
+        )}
+        {isPinned && (
+          <span
+            role="button"
+            tabIndex={0}
+            onClick={(e) => {
+              e.stopPropagation();
+              window.dispatchEvent(
+                new CustomEvent(WORKFLOW_NODE_PIN_EDIT_EVENT, {
+                  detail: { nodeId: step.nodeId },
+                }),
+              );
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                e.stopPropagation();
+                window.dispatchEvent(
+                  new CustomEvent(WORKFLOW_NODE_PIN_EDIT_EVENT, {
+                    detail: { nodeId: step.nodeId },
+                  }),
+                );
+              }
+            }}
+            aria-label="Editar JSON pinado"
+            title="Editar JSON pinado"
+            className="inline-flex size-6 items-center justify-center rounded-md text-amber-500 hover:bg-muted hover:text-amber-600"
+          >
+            <Pencil className="size-3.5" />
+          </span>
+        )}
         {hasPayload && <ChevronIcon className="size-3.5 text-muted-foreground" />}
       </button>
 

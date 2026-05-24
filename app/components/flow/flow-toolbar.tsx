@@ -1,5 +1,6 @@
 import { motion } from "framer-motion";
 import {
+  MessageSquare,
   MousePointer2,
   Hand,
   Plus,
@@ -150,6 +151,13 @@ export function FlowToolbar({ onAddSticky, onAddContainer, onAutoLayout }: FlowT
         </ToolButton>
         <ToolButton active={tool === "pan"} onClick={() => setTool("pan")} title="Mover — H">
           <Hand className="size-4" />
+        </ToolButton>
+        <ToolButton
+          active={tool === "comment"}
+          onClick={() => setTool(tool === "comment" ? "select" : "comment")}
+          title="Comentar — C"
+        >
+          <MessageSquare className="size-4" />
         </ToolButton>
 
         <Divider />

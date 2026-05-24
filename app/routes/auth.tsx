@@ -1,6 +1,6 @@
 import { motion } from "framer-motion";
 import { Workflow } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
 import {
@@ -15,7 +15,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "~/com
 import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "~/components/ui/tabs";
-import { authClient, useSession } from "~/lib/auth-client";
+import { authClient, organization, useSession } from "~/lib/auth-client";
 import { translateAuthError } from "~/lib/auth-errors";
 import type { Route } from "./+types/auth";
 
@@ -29,6 +29,32 @@ export default function AuthRoute() {
   const nextPath = sanitizeNext(searchParams.get("next"));
   const { data: session, isPending: sessionPending } = useSession();
   const showGuestInviteBanner = !!invitationId && !sessionPending && !session?.user;
+
+  // Convite aberto por visitante → resolve o e-mail destinatário pra
+  // pré-preencher o form e abrir já na aba de cadastro.
+  const [inviteEmail, setInviteEmail] = useState<string | null>(null);
+  useEffect(() => {
+    if (!invitationId) {
+      setInviteEmail(null);
+      return;
+    }
+    let cancelled = false;
+    organization
+      .getInvitation({ query: { id: invitationId } })
+      .then((res) => {
+        if (cancelled) return;
+        const email = (res?.data as { email?: string } | null | undefined)?.email ?? null;
+        if (email) setInviteEmail(email);
+      })
+      .catch(() => {
+        /* silencioso — sem pré-preenchimento se a API falhar */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [invitationId]);
+
+  const defaultTab = invitationId ? "signup" : "login";
 
   return (
     <main className="grid min-h-dvh w-full lg:grid-cols-2">
@@ -44,17 +70,25 @@ export default function AuthRoute() {
             <span className="text-sm font-medium">Workflows</span>
           </div>
 
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue={defaultTab} className="w-full">
             <TabsList className="grid w-full grid-cols-2">
               <TabsTrigger value="login">Entrar</TabsTrigger>
               <TabsTrigger value="signup">Criar conta</TabsTrigger>
             </TabsList>
 
             <TabsContent value="login" className="mt-4">
-              <LoginCard invitationId={invitationId} nextPath={nextPath} />
+              <LoginCard
+                invitationId={invitationId}
+                nextPath={nextPath}
+                prefillEmail={inviteEmail}
+              />
             </TabsContent>
             <TabsContent value="signup" className="mt-4">
-              <SignupCard invitationId={invitationId} nextPath={nextPath} />
+              <SignupCard
+                invitationId={invitationId}
+                nextPath={nextPath}
+                prefillEmail={inviteEmail}
+              />
             </TabsContent>
           </Tabs>
 
@@ -112,9 +146,11 @@ export default function AuthRoute() {
 function LoginCard({
   invitationId,
   nextPath,
+  prefillEmail,
 }: {
   invitationId: string | null;
   nextPath: string | null;
+  prefillEmail: string | null;
 }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -159,6 +195,8 @@ function LoginCard({
               placeholder="voce@empresa.com"
               autoComplete="email"
               required
+              key={prefillEmail ?? "empty"}
+              defaultValue={prefillEmail ?? ""}
             />
           </div>
           <div className="space-y-2">
@@ -195,9 +233,11 @@ function LoginCard({
 function SignupCard({
   invitationId,
   nextPath,
+  prefillEmail,
 }: {
   invitationId: string | null;
   nextPath: string | null;
+  prefillEmail: string | null;
 }) {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(false);
@@ -249,6 +289,8 @@ function SignupCard({
               placeholder="voce@empresa.com"
               autoComplete="email"
               required
+              key={prefillEmail ?? "empty"}
+              defaultValue={prefillEmail ?? ""}
             />
           </div>
           <div className="space-y-2">

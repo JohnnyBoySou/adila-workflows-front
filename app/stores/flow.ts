@@ -13,7 +13,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { BackgroundVariant, ConnectionLineType } from "@xyflow/react";
 
-export type ToolMode = "select" | "pan";
+export type ToolMode = "select" | "pan" | "comment";
 
 const BG_VARIANTS: BackgroundVariant[] = [
   BackgroundVariant.Dots,

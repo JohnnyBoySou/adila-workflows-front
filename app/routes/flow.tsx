@@ -22,10 +22,18 @@ import * as runsApi from "~/services/runs";
 import type { RunStatus } from "~/services/runs";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
-import { pinnedDataApi } from "~/stores/pinned-data";
+import { pinnedDataApi, usePinnedData } from "~/stores/pinned-data";
+import {
+  PinEditorDialog,
+  WORKFLOW_NODE_PIN_EDIT_EVENT,
+  type WorkflowNodePinEditDetail,
+} from "~/components/flow/pin-editor-dialog";
 import { useSession } from "~/lib/auth-client";
 import { useCollaboration, type RemotePresence } from "~/hooks/use-collaboration";
 import { useOrgMembersIndex } from "~/hooks/use-org-members";
+import { useWorkflowComments } from "~/hooks/use-workflow-comments";
+import { CommentThreadSheet } from "~/components/flow/comments/comment-thread-sheet";
+import type { MentionMember } from "~/components/flow/comments/mention-input";
 import { useCollabDoc } from "~/hooks/use-collab-doc";
 import type { PersistedDefinition } from "~/components/flow/definition";
 import { CollabPresenceStack } from "~/components/flow/collab-presence-stack";
@@ -86,8 +94,54 @@ function FlowRouteInner() {
     user: collabUser,
     enabled: !!id && tab === "editor",
     onYjsUpdate: handleIncomingYjs,
+    onCommentEvent: (event) => comments.handleEvent(event),
   });
   const { index: membersIndex } = useOrgMembersIndex();
+
+  // ── Comentários (threads + WS) ─────────────────────────────────────────
+  const commentsMembersIndex = useMemo<Map<string, MentionMember>>(() => {
+    const m = new Map<string, MentionMember>();
+    for (const [uid, member] of membersIndex.entries()) {
+      m.set(uid, { id: uid, name: member.name, email: member.email });
+    }
+    return m;
+  }, [membersIndex]);
+  const mentionMembers = useMemo<MentionMember[]>(
+    () => Array.from(commentsMembersIndex.values()),
+    [commentsMembersIndex],
+  );
+  const comments = useWorkflowComments({
+    workflowId: id ?? "",
+    currentUserId: sessionData?.user?.id,
+    membersIndex: commentsMembersIndex,
+  });
+  const [commentSheetOpen, setCommentSheetOpen] = useState(false);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [draftCommentPin, setDraftCommentPin] = useState<{ x: number; y: number } | null>(null);
+
+  const activeThread = useMemo(
+    () => comments.threads.find((t) => t.root.id === activeThreadId) ?? null,
+    [comments.threads, activeThreadId],
+  );
+
+  const handleCreateCommentAt = useCallback((coords: { x: number; y: number }) => {
+    setActiveThreadId(null);
+    setDraftCommentPin(coords);
+    setCommentSheetOpen(true);
+  }, []);
+  const handleOpenCommentThread = useCallback((rootId: string) => {
+    setDraftCommentPin(null);
+    setActiveThreadId(rootId);
+    setCommentSheetOpen(true);
+  }, []);
+  const handleCommentSheetOpenChange = useCallback((open: boolean) => {
+    setCommentSheetOpen(open);
+    if (!open) {
+      setActiveThreadId(null);
+      setDraftCommentPin(null);
+    }
+  }, []);
+
   const enrichedOthers = useMemo<RemotePresence[]>(
     () =>
       collab.others.map((p) => {
@@ -221,15 +275,41 @@ function FlowRouteInner() {
     (r) => !TERMINAL_RUN_STATUSES.has(r.status),
   );
 
+  const pinnedMap = usePinnedData(id ?? "");
+  const pinnedCount = Object.keys(pinnedMap).length;
+  const handleClearPins = useCallback(() => {
+    if (!id) return;
+    pinnedDataApi.clear(id);
+  }, [id]);
+
+  // Modo inspector — persiste em localStorage pra durar entre reloads/abas
+  // do mesmo workflow. Default off pra não distrair quem só quer editar.
+  const [inspectorMode, setInspectorMode] = useState<boolean>(() => {
+    if (typeof window === "undefined") return false;
+    return localStorage.getItem("adila.inspector-mode.v1") === "1";
+  });
+  const toggleInspectorMode = useCallback(() => {
+    setInspectorMode((cur) => {
+      const next = !cur;
+      try {
+        localStorage.setItem("adila.inspector-mode.v1", next ? "1" : "0");
+      } catch {
+        // safari privado / quota — silencioso, é só preferência.
+      }
+      return next;
+    });
+  }, []);
+
   // ── Run: dispara o workflow e troca pra aba de execuções ───────────────
   // `pinnedData` é lido no momento do disparo (vive em localStorage, fora
   // do React Query) — assim cada run pega o snapshot mais recente, sem
   // precisar de reatividade aqui.
   const runMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: (opts: { stopAtNodeId?: string } = {}) => {
       const pinnedData = id ? pinnedDataApi.get(id) : {};
       return workflowsApi.run(id!, {
         ...(Object.keys(pinnedData).length > 0 && { pinnedData }),
+        ...(opts.stopAtNodeId && { stopAtNodeId: opts.stopAtNodeId }),
       });
     },
     onSuccess: (res) => {
@@ -239,27 +319,38 @@ function FlowRouteInner() {
     },
   });
 
-  const handleRun = useCallback(() => {
-    if (!id) return;
-    // Garante que o estado atual do canvas foi persistido antes de disparar
-    // — caso contrário o worker pega a definition antiga.
-    if (saveState === "dirty") flushSave();
-    runMutation.mutate();
-  }, [id, saveState, flushSave, runMutation]);
+  const handleRun = useCallback(
+    (stopAtNodeId?: string) => {
+      if (!id) return;
+      // Garante que o estado atual do canvas foi persistido antes de disparar
+      // — caso contrário o worker pega a definition antiga.
+      if (saveState === "dirty") flushSave();
+      runMutation.mutate(stopAtNodeId ? { stopAtNodeId } : {});
+    },
+    [id, saveState, flushSave, runMutation],
+  );
 
   // Botão "play" dentro do node toolbar emite via window — escutamos aqui
-  // pra disparar a execução sem acoplar o componente leaf à mutation.
-  // (O backend ainda não suporta start-from-node, então hoje sempre roda o
-  // workflow inteiro; o nodeId fica disponível pra quando suportar.)
+  // pra disparar a execução até esse nó (engine para após executá-lo e
+  // devolve o output como resultado final do run).
   useEffect(() => {
-    function onPlayFromNode(_e: Event) {
-      const _evt = _e as CustomEvent<WorkflowNodePlayDetail>;
-      void _evt;
-      handleRun();
+    function onPlayFromNode(e: Event) {
+      const evt = e as CustomEvent<WorkflowNodePlayDetail>;
+      handleRun(evt.detail?.nodeId);
     }
     window.addEventListener(WORKFLOW_NODE_PLAY_EVENT, onPlayFromNode);
     return () => window.removeEventListener(WORKFLOW_NODE_PLAY_EVENT, onPlayFromNode);
   }, [handleRun]);
+
+  const [pinEditorNodeId, setPinEditorNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    function onPinEdit(e: Event) {
+      const evt = e as CustomEvent<WorkflowNodePinEditDetail>;
+      if (evt.detail?.nodeId) setPinEditorNodeId(evt.detail.nodeId);
+    }
+    window.addEventListener(WORKFLOW_NODE_PIN_EDIT_EVENT, onPinEdit);
+    return () => window.removeEventListener(WORKFLOW_NODE_PIN_EDIT_EVENT, onPinEdit);
+  }, []);
 
   // Persistir mudanças de info (nome/descrição).
   const handleInfoSave = useCallback(
@@ -303,9 +394,18 @@ function FlowRouteInner() {
               initialDefinition={workflow.definition}
               onDirtyChange={handleDirty}
               remoteCursors={enrichedOthers}
+              nodeLocks={collab.nodeLocks}
               onCursorMove={collab.sendCursor}
               onSelectionChange={collab.sendSelection}
+              onNodeGrab={collab.sendGrab}
+              onNodeRelease={collab.sendRelease}
               onViewportChange={collab.sendViewport}
+              commentThreads={comments.threads}
+              activeCommentThreadId={activeThreadId}
+              draftCommentPin={draftCommentPin}
+              onCreateCommentAt={handleCreateCommentAt}
+              onOpenCommentThread={handleOpenCommentThread}
+              inspectorMode={inspectorMode}
             />
           ) : (
             <LoadingState />
@@ -359,6 +459,10 @@ function FlowRouteInner() {
           publishState="idle"
           lastSavedAt={lastSavedAt}
           hasActiveRun={hasActiveRun}
+          pinnedCount={pinnedCount}
+          onClearPins={handleClearPins}
+          inspectorMode={inspectorMode}
+          onToggleInspectorMode={toggleInspectorMode}
         />
       </div>
 
@@ -387,12 +491,46 @@ function FlowRouteInner() {
         workflowId={workflow.id}
       />
 
+      <CommentThreadSheet
+        open={commentSheetOpen}
+        onOpenChange={handleCommentSheetOpenChange}
+        thread={activeThread}
+        draftCoords={draftCommentPin}
+        members={mentionMembers}
+        currentUserId={sessionData?.user?.id}
+        onCreateRoot={async (input) => {
+          const created = await comments.createComment(input);
+          setDraftCommentPin(null);
+          setActiveThreadId(created.id);
+        }}
+        onCreateReply={async (parentId, input) =>
+          comments.createComment({ ...input, parentId })
+        }
+        onUpdate={async (commentId, patch) => comments.updateComment({ commentId, patch })}
+        onDelete={async (commentId) => {
+          await comments.deleteComment(commentId);
+          if (activeThreadId === commentId) {
+            setCommentSheetOpen(false);
+            setActiveThreadId(null);
+          }
+        }}
+      />
+
       <PublishVersionDialog
         open={publishDialogOpen}
         onOpenChange={setPublishDialogOpen}
         workflowId={workflow.id}
         onBeforePublish={() => {
           if (saveState === "dirty") flushSave();
+        }}
+      />
+
+      <PinEditorDialog
+        workflowId={id ?? null}
+        nodeId={pinEditorNodeId}
+        open={pinEditorNodeId !== null}
+        onOpenChange={(next) => {
+          if (!next) setPinEditorNodeId(null);
         }}
       />
     </main>

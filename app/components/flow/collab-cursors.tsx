@@ -31,8 +31,14 @@ export const CollabCursors = memo(function CollabCursors({ others }: CollabCurso
         return (
           <div
             key={p.userId}
-            className="absolute -translate-x-[2px] -translate-y-[2px] transition-transform duration-75 ease-linear"
-            style={{ transform: `translate(${left}px, ${top}px)` }}
+            // Sem CSS transition: durante pan/zoom local, a viewport muda a
+            // 60fps e qualquer transition obriga o cursor a "perseguir" o
+            // destino com atraso, criando a sensação de tremer/andar junto.
+            // Updates remotos já chegam throttled (~50ms), suaves o suficiente.
+            className="absolute"
+            style={{
+              transform: `translate(${left}px, ${top}px) translate(-2px, -2px)`,
+            }}
           >
             <MousePointer2 size={18} style={{ color, fill: color }} strokeWidth={1.5} />
             <span

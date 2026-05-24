@@ -71,6 +71,10 @@ export const queryKeys = {
     detail: (workflowId: string, versionId: string) =>
       ["workflow-versions", "detail", workflowId, versionId] as const,
   },
+  comments: {
+    all: ["comments"] as const,
+    byWorkflow: (workflowId: string) => ["comments", "workflow", workflowId] as const,
+  },
   auditLogs: {
     all: ["audit-logs"] as const,
     byWorkflow: (workflowId: string) => ["audit-logs", "workflow", workflowId] as const,

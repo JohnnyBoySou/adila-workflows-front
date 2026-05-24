@@ -28,6 +28,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "~/components/ui/card";
 import { cn } from "~/lib/utils";
 import { useExecutionStore, type NodeExecutionStatus } from "~/stores/execution";
 import { useIsPinned } from "~/stores/pinned-data";
+import { WORKFLOW_NODE_PIN_EDIT_EVENT } from "./pin-editor-dialog";
 import { useWorkflowId } from "./workflow-context";
 import { NODE_ICON_MAP } from "./node-library";
 
@@ -267,12 +268,20 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
       )}
 
       {pinned && (
-        <span
-          className="absolute -right-1.5 -top-1.5 grid size-5 place-items-center rounded-full bg-amber-500 text-white shadow-sm ring-2 ring-background"
-          title="Saída pinada — próximas runs usam este resultado"
+        <button
+          type="button"
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(
+              new CustomEvent(WORKFLOW_NODE_PIN_EDIT_EVENT, { detail: { nodeId: id } }),
+            );
+          }}
+          className="absolute -right-1.5 -top-1.5 grid size-5 cursor-pointer place-items-center rounded-full bg-amber-500 text-white shadow-sm ring-2 ring-background transition-transform hover:scale-110"
+          title="Saída pinada — clique para editar"
+          aria-label="Editar pin"
         >
           <Pin className="size-2.5" />
-        </span>
+        </button>
       )}
       <CardHeader className={cn("flex flex-row items-center gap-2 px-3", isTrigger && "pl-6")}>
         <span

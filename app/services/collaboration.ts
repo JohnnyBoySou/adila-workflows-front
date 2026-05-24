@@ -51,6 +51,11 @@ export type Presence = {
   workflowId: string;
   cursor: Cursor;
   selectedNodeId?: string;
+  /**
+   * Node sendo manipulado ativamente (drag ou edição). Outros clientes
+   * mostram lock + nome em cima do node e bloqueiam interação local.
+   */
+  grabbedNodeId?: string;
   viewport?: Viewport;
   updatedAt: number;
 };
@@ -68,6 +73,21 @@ export type DocumentSnapshot = {
   patches: Array<{ id: string; updateBase64: string; at: string }>;
 };
 
+export type CommentBroadcast = {
+  id: string;
+  organizationId: string;
+  workflowId: string;
+  parentId: string | null;
+  authorId: string;
+  body: string;
+  mentions: string[];
+  x: number | null;
+  y: number | null;
+  resolved: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AwarenessEvent =
   | { type: "room.ready"; workflowId: string; connectionId: string }
   | { type: "user.joined"; workflowId: string; presence: Presence }
@@ -76,6 +96,9 @@ export type AwarenessEvent =
   | { type: "node.selected"; workflowId: string; presence: Presence }
   | { type: "viewport.changed"; workflowId: string; presence: Presence }
   | { type: "yjs.update"; workflowId: string; updateBase64: string; at: number }
+  | { type: "comment.created"; workflowId: string; comment: CommentBroadcast }
+  | { type: "comment.updated"; workflowId: string; comment: CommentBroadcast }
+  | { type: "comment.deleted"; workflowId: string; commentId: string }
   | { type: "error"; error: string };
 
 export type OutgoingMessage = {
@@ -88,6 +111,8 @@ export type OutgoingMessage = {
   userId: string;
   cursor?: Cursor;
   selectedNodeId?: string;
+  /** "" = release explícito (server limpa o lock). Omitido = sem mudança. */
+  grabbedNodeId?: string;
   viewport?: Viewport;
   updateBase64?: string;
 };

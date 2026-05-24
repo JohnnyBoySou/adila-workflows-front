@@ -11,6 +11,7 @@ import {
 
 import { QueryClientProvider } from "@tanstack/react-query";
 
+import { NotificationsHost } from "~/components/notifications-host";
 import { ThemeScript } from "~/components/theme/theme-script";
 import { TooltipProvider } from "~/components/ui/tooltip";
 import { queryClient } from "~/lib/query-client";
@@ -61,6 +62,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider delayDuration={150}>
         <Outlet />
+        <NotificationsHost />
       </TooltipProvider>
     </QueryClientProvider>
   );

@@ -182,6 +182,11 @@ export function run(
     input?: Record<string, unknown>;
     /** Outputs pinados pelo editor — pulam o handler do nó no executor. */
     pinnedData?: Record<string, Record<string, unknown>>;
+    /**
+     * Modo debug "play até aqui" — engine para após executar este nó.
+     * Combine com `pinnedData` pra evitar disparar nós upstream.
+     */
+    stopAtNodeId?: string;
   } = {},
 ): Promise<{ runId: string; jobId?: string }> {
   return unwrap(

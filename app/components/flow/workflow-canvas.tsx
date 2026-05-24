@@ -41,6 +41,8 @@ import { NodeConfigDialog, type NodeMeta } from "./node-config-dialog";
 import { NodeRunInspector } from "./node-run-inspector";
 import { WorkflowIdProvider } from "./workflow-context";
 import { CollabCursors } from "./collab-cursors";
+import { CommentPinsLayer } from "./comments/comment-pins-layer";
+import type { CommentThread } from "~/hooks/use-workflow-comments";
 import { useFlowShortcuts } from "~/hooks/use-flow-shortcuts";
 import { useFlowStore } from "~/stores/flow";
 import { useExecutionStore } from "~/stores/execution";
@@ -186,12 +188,38 @@ type WorkflowCanvasProps = {
   onDirtyChange?: () => void;
   /** Lista de presenças remotas (cursores) renderizadas como overlay. */
   remoteCursors?: import("~/hooks/use-collaboration").RemotePresence[];
+  /**
+   * Map<nodeId, presence> dos nodes que outros usuários estão manipulando.
+   * Quando setado, o canvas desativa drag/edição desse node localmente
+   * (lock pessimista) e renderiza um overlay com o nome do dono.
+   */
+  nodeLocks?: Map<string, import("~/hooks/use-collaboration").RemotePresence>;
   /** Notificado em movimento do mouse sobre o pane, em coords de fluxo. */
   onCursorMove?: (cursor: { x: number; y: number }) => void;
   /** Notificado em mudança de seleção (primeiro nó selecionado ou undefined). */
   onSelectionChange?: (nodeId: string | undefined) => void;
+  /** Disparado quando o usuário começa a arrastar um node (lock pessimista). */
+  onNodeGrab?: (nodeId: string) => void;
+  /** Disparado quando o usuário solta um node (release do lock). */
+  onNodeRelease?: () => void;
   /** Notificado em pan/zoom. */
   onViewportChange?: (viewport: { x: number; y: number; zoom: number }) => void;
+  /** Threads de comentário renderizadas como pins sobre o canvas. */
+  commentThreads?: CommentThread[];
+  /** ID da thread atualmente aberta — pin recebe destaque. */
+  activeCommentThreadId?: string | null;
+  /** Coords do pin "fantasma" enquanto o usuário compõe o primeiro comentário. */
+  draftCommentPin?: { x: number; y: number } | null;
+  /** Click no canvas em modo comentário: cria pin em coords de mundo. */
+  onCreateCommentAt?: (coords: { x: number; y: number }) => void;
+  /** Click em pin existente. */
+  onOpenCommentThread?: (rootId: string) => void;
+  /**
+   * Modo "inspector sempre-ligado": qualquer click num nó abre o sheet
+   * lateral mesmo sem run focado/step. Quando ele já está aberto, clicar
+   * em outro nó troca o conteúdo (segue a seleção).
+   */
+  inspectorMode?: boolean;
 };
 
 // ── id generator ─────────────────────────────────────────────────────────
@@ -214,9 +242,18 @@ function Flow({
   initialDefinition,
   onDirtyChange,
   remoteCursors,
+  nodeLocks,
   onCursorMove,
   onSelectionChange,
+  onNodeGrab,
+  onNodeRelease,
   onViewportChange,
+  commentThreads,
+  activeCommentThreadId,
+  draftCommentPin,
+  onCreateCommentAt,
+  onOpenCommentThread,
+  inspectorMode = false,
 }: WorkflowCanvasProps) {
   const nodeTypes = useMemo(
     () => ({
@@ -324,6 +361,8 @@ function Flow({
   // Toggles de UI vêm do Zustand — assinaturas finas evitam re-render do canvas
   // quando outros pedaços da toolbar mudam.
   const isPanMode = useFlowStore((s) => s.tool === "pan");
+  const isCommentMode = useFlowStore((s) => s.tool === "comment");
+  const setTool = useFlowStore((s) => s.setTool);
   const locked = useFlowStore((s) => s.locked);
   const miniMapVisible = useFlowStore((s) => s.miniMapVisible);
   const libraryOpen = useFlowStore((s) => s.libraryOpen);
@@ -552,15 +591,33 @@ function Flow({
 
   const handleNodeClick = useCallback(
     (_e: React.MouseEvent, node: Node) => {
-      // Sem run focado, click é apenas seleção (React Flow já cuida). Só
-      // abrimos o inspector se houver dado pra inspecionar — evita "abre
-      // sheet vazio" toda vez que clicar num nó na composição inicial.
+      // Sticky/container/comment não inspecionam — só nós do engine.
+      if (node.type && node.type !== "workflow") return;
+      // Modo "inspector sempre-ligado" — abre mesmo sem run focado/step.
+      // O `NodeRunInspector` já mostra empty state elegante quando não há dado.
+      if (inspectorMode) {
+        setInspectorNodeId(node.id);
+        setInspectorOpen(true);
+        return;
+      }
+      // Modo normal: só abre se tiver dado pra mostrar — evita sheet vazio
+      // durante composição inicial.
       if (!focusedRunId) return;
       if (!stepsByNodeId[node.id]) return;
       setInspectorNodeId(node.id);
       setInspectorOpen(true);
     },
-    [focusedRunId, stepsByNodeId],
+    [focusedRunId, stepsByNodeId, inspectorMode],
+  );
+
+  const handlePaneClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (!isCommentMode || !onCreateCommentAt) return;
+      const pos = screenToFlowPosition({ x: event.clientX, y: event.clientY });
+      onCreateCommentAt(pos);
+      setTool("select");
+    },
+    [isCommentMode, onCreateCommentAt, screenToFlowPosition, setTool],
   );
 
   const handlePaneMouseMove = useCallback(
@@ -748,7 +805,15 @@ function Flow({
 
   const handleNodeDragStop = useCallback(() => {
     setSnapGuides([]);
-  }, []);
+    onNodeRelease?.();
+  }, [onNodeRelease]);
+
+  const handleNodeDragStart = useCallback(
+    (_event: React.MouseEvent, node: Node) => {
+      onNodeGrab?.(node.id);
+    },
+    [onNodeGrab],
+  );
 
   // ── Minimap node color ─────────────────────────────────────────────────
   const minimapNodeColor = useCallback((node: Node): string => {
@@ -790,7 +855,15 @@ function Flow({
         onToggleLock={toggleNodeLock}
       >
         <ReactFlow
-          nodes={nodes}
+          nodes={
+            nodeLocks && nodeLocks.size > 0
+              ? nodes.map((n) =>
+                  nodeLocks.has(n.id)
+                    ? { ...n, draggable: false, selectable: false, className: "ring-2 ring-amber-400/80 ring-offset-2 ring-offset-background rounded-md" }
+                    : n,
+                )
+              : nodes
+          }
           edges={styledEdges}
           nodeTypes={nodeTypes}
           defaultEdgeOptions={defaultEdgeOptions}
@@ -802,17 +875,19 @@ function Flow({
           onNodeClick={handleNodeClick}
           onNodeDoubleClick={handleNodeDoubleClick}
           onEdgeDoubleClick={onEdgeDoubleClick}
+          onNodeDragStart={handleNodeDragStart}
           onNodeDrag={handleNodeDrag}
           onNodeDragStop={handleNodeDragStop}
           snapToGrid={gridSnapMode}
           snapGrid={[16, 16]}
+          onPaneClick={handlePaneClick}
           onPaneMouseMove={handlePaneMouseMove}
           onNodeMouseMove={handleNodeMouseMove}
           onSelectionChange={handleSelectionChange}
           onMove={handleMove}
           fitView
           proOptions={{ hideAttribution: true }}
-          className="bg-background"
+          className={cn("bg-background", isCommentMode && "cursor-crosshair")}
           panOnDrag={isPanMode ? true : [1, 2]}
           selectionOnDrag={!isPanMode && !locked}
           nodesDraggable={!locked}
@@ -829,6 +904,14 @@ function Flow({
           {remoteCursors && remoteCursors.length > 0 && (
             <CollabCursors others={remoteCursors} />
           )}
+          {(commentThreads && commentThreads.length > 0) || draftCommentPin ? (
+            <CommentPinsLayer
+              threads={commentThreads ?? []}
+              activeThreadId={activeCommentThreadId}
+              draftPin={draftCommentPin ?? null}
+              onOpenThread={(id) => onOpenCommentThread?.(id)}
+            />
+          ) : null}
           {!presentationMode && miniMapVisible && (
             <MiniMap
               nodeColor={minimapNodeColor}

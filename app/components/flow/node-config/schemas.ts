@@ -34,6 +34,110 @@ const start: NodeConfigSchema = {
   fields: [],
 };
 
+const manual_trigger: NodeConfigSchema = {
+  title: "Rodar agora",
+  description:
+    "Disparo manual (botão Play). Opcionalmente define um payload default usado quando o run é disparado sem body.",
+  fields: [
+    {
+      name: "defaultInput",
+      label: "Payload default",
+      type: "json",
+      description: "JSON usado como input quando o run é disparado sem body.",
+    },
+  ],
+};
+
+const stop_and_error: NodeConfigSchema = {
+  title: "Parar com erro",
+  description:
+    "Aborta o run com mensagem custom. Use como gate de validação depois de um if.",
+  fields: [
+    {
+      name: "message",
+      label: "Mensagem do erro",
+      type: "text",
+      required: true,
+      placeholder: "Validação falhou: campo X ausente",
+    },
+    {
+      name: "details",
+      label: "Detalhes (opcional)",
+      type: "json",
+      description: "Objeto anexado ao erro pra contexto adicional.",
+    },
+  ],
+};
+
+const transform: NodeConfigSchema = {
+  title: "Transformar",
+  description:
+    "Mapper declarativo: reescreve a forma do payload. mode=object monta um objeto único; mode=array itera `source` e mapeia cada item via `it.*`.",
+  dialogSize: "wide",
+  fields: [
+    {
+      name: "mode",
+      label: "Modo",
+      type: "select",
+      options: [
+        { value: "object", label: "Objeto único" },
+        { value: "array", label: "Array (iterar source)" },
+      ],
+    },
+    {
+      name: "source",
+      label: "Source (array)",
+      type: "text",
+      placeholder: "{{ steps.fetch.items }}",
+      description: "Apenas no mode=array. Templatável; deve resolver pra um array.",
+    },
+    {
+      name: "mapping",
+      label: "Mapping",
+      type: "json",
+      required: true,
+      description:
+        'Ex: { "id": "input.user.id", "name": "it.attributes.name" }. Strings que começam com input./vars./env./steps./it. são tratadas como dot-path; resto vira template.',
+    },
+    {
+      name: "include_source",
+      label: "Incluir input original em _source",
+      type: "boolean",
+    },
+  ],
+};
+
+const ai_agent: NodeConfigSchema = {
+  title: "Agente IA",
+  description:
+    "LLM com loop de tool calling. Cada tool tem nome, descrição, inputSchema (JSON Schema) e ação (http ou echo).",
+  dialogSize: "wide",
+  fields: [
+    {
+      name: "provider",
+      label: "Provedor",
+      type: "select",
+      options: [
+        { value: "anthropic", label: "Anthropic" },
+        { value: "openai", label: "OpenAI" },
+      ],
+    },
+    { name: "model", label: "Modelo", type: "text", required: true, placeholder: "claude-sonnet-4-6" },
+    { name: "prompt", label: "Prompt", type: "textarea", required: true, rows: 5 },
+    { name: "system", label: "System", type: "textarea", rows: 3 },
+    { name: "maxSteps", label: "Máx. de passos", type: "number", min: 1 },
+    { name: "temperature", label: "Temperature", type: "number", step: 0.1, min: 0, max: 2 },
+    { name: "maxOutputTokens", label: "Max output tokens", type: "number", min: 1 },
+    {
+      name: "tools",
+      label: "Tools",
+      type: "json",
+      description:
+        'Array de tools: [{ "name": "...", "description": "...", "inputSchema": {...}, "action": { "type": "http", "url": "..." } }]',
+    },
+  ],
+};
+
 const webhook_trigger: NodeConfigSchema = {
   title: "Webhook",
   description:
@@ -384,6 +488,10 @@ const container: NodeConfigSchema = {
 // ── Registry ─────────────────────────────────────────────────────────────
 export const NODE_CONFIG_SCHEMAS: Record<string, NodeConfigSchema> = {
   start,
+  manual_trigger,
+  stop_and_error,
+  transform,
+  ai_agent,
   webhook_trigger,
   end,
   noop,
