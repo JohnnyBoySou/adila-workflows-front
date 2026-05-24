@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { BackgroundVariant, ConnectionLineType } from "@xyflow/react";
-import { Check, FileText, Spline } from "lucide-react";
+import type { PersistedNode } from "./definition";
+import { Activity, Cable, Check, FileText, History, Spline } from "lucide-react";
 
 import {
   Dialog,
@@ -24,6 +25,9 @@ import {
 import { Sections, type SectionItem } from "~/components/ui/sections";
 import { cn } from "~/lib/utils";
 import { DEFAULT_EDGE_STYLE, useFlowStore, type EdgeStyle } from "~/stores/flow";
+import { WorkflowVersionsPanel } from "./workflow-versions-panel";
+import { WorkflowHistoryPanel } from "./workflow-history-panel";
+import { WorkflowConnectionsSection } from "./workflow-connections-section";
 
 export type WorkflowInfo = {
   name: string;
@@ -35,6 +39,12 @@ type Props = {
   onOpenChange: (open: boolean) => void;
   info: WorkflowInfo;
   onSave: (info: WorkflowInfo) => void;
+  /** ID do workflow — necessário para a aba "Versões" listar do backend. */
+  workflowId: string;
+  /** Snapshot dos nodes da canvas — usado pela aba "Conexões" para derivar requisitos. */
+  nodes: PersistedNode[];
+  /** Abre o ConnectionsManagerDialog do workflow (mantido em flow.tsx). */
+  onOpenConnectionsManager: () => void;
 };
 
 const EDGE_TYPE_OPTIONS: { value: ConnectionLineType; label: string }[] = [
@@ -53,7 +63,10 @@ const BACKGROUND_OPTIONS: { value: BackgroundVariant; label: string }[] = [
 
 const SECTIONS = [
   { id: "general", label: "Geral", icon: FileText },
+  { id: "versions", label: "Versões", icon: History },
+  { id: "history", label: "Histórico", icon: Activity },
   { id: "canvas", label: "Canvas", icon: Spline },
+  { id: "connections", label: "Conexões", icon: Cable },
 ] as const satisfies ReadonlyArray<SectionItem>;
 
 type SectionId = (typeof SECTIONS)[number]["id"];
@@ -80,7 +93,15 @@ const COLOR_SWATCHES = [
  * Edições de "Canvas" aplicam ao vivo (refletem direto no store) — é
  * uma preferência de UI, não dado do workflow.
  */
-export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) {
+export function WorkflowInfoDialog({
+  open,
+  onOpenChange,
+  info,
+  onSave,
+  workflowId,
+  nodes,
+  onOpenConnectionsManager,
+}: Props) {
   const [name, setName] = useState(info.name);
   const [description, setDescription] = useState(info.description);
 
@@ -153,6 +174,18 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
                     />
                   </div>
                 </form>
+              )}
+
+              {section === "versions" && (
+                <div className="max-w-3xl">
+                  <WorkflowVersionsPanel workflowId={workflowId} />
+                </div>
+              )}
+
+              {section === "history" && (
+                <div className="max-w-3xl">
+                  <WorkflowHistoryPanel workflowId={workflowId} />
+                </div>
               )}
 
               {section === "canvas" && (
@@ -237,6 +270,31 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
                 </div>
               </Row>
 
+              {edgeStyle.gradient && edgeStyle.animated && (
+                <Row label="Direção do fluxo">
+                  <div className="flex flex-wrap gap-2">
+                    <ToggleChip
+                      active={edgeStyle.flowDirection === "forward"}
+                      onClick={() => setEdgeStyle({ flowDirection: "forward" })}
+                    >
+                      → Início ao fim
+                    </ToggleChip>
+                    <ToggleChip
+                      active={edgeStyle.flowDirection === "backward"}
+                      onClick={() => setEdgeStyle({ flowDirection: "backward" })}
+                    >
+                      ← Fim ao início
+                    </ToggleChip>
+                    <ToggleChip
+                      active={edgeStyle.flowDirection === "alternate"}
+                      onClick={() => setEdgeStyle({ flowDirection: "alternate" })}
+                    >
+                      ↔ Vai e volta
+                    </ToggleChip>
+                  </div>
+                </Row>
+              )}
+
               <Row label="Preview">
                 <EdgePreview style={edgeStyle} />
               </Row>
@@ -273,6 +331,14 @@ export function WorkflowInfoDialog({ open, onOpenChange, info, onSave }: Props) 
                     </Button>
                   </div>
                 </div>
+              )}
+
+              {section === "connections" && (
+                <WorkflowConnectionsSection
+                  workflowId={workflowId}
+                  nodes={nodes}
+                  onOpenConnectionsManager={onOpenConnectionsManager}
+                />
               )}
           </Sections>
 
@@ -374,7 +440,10 @@ function EdgePreview({ style }: { style: EdgeStyle }) {
   return (
     <svg
       viewBox="0 0 200 40"
-      className="h-10 w-full rounded-md border border-border bg-muted/30"
+      preserveAspectRatio="none"
+      width="100%"
+      height="40"
+      className="block h-10 w-full rounded-md border border-border bg-muted/30"
       aria-hidden
     >
       <defs>

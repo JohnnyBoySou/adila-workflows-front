@@ -11,6 +11,9 @@ import { ExecuteWorkflowPanel } from "./execute-workflow-panel";
 import { HttpRequestPanel } from "./http-request-panel";
 import { IfPanel } from "./if-panel";
 import { PostgresPanel } from "./postgres-panel";
+import { RedisPanel } from "./redis-panel";
+import { S3Panel } from "./s3-panel";
+import { VectorStorePanel } from "./vector-store-panel";
 import { SwitchPanel } from "./switch-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
@@ -24,6 +27,7 @@ const webhook_trigger: NodeConfigSchema = {
   title: "Webhook",
   description:
     "Disparado por POST em URL pública. O body JSON vira o input do run (acessível como steps[<id>].body).",
+  dialogSize: "wide",
   fields: [
     {
       name: "responseMode",
@@ -106,16 +110,13 @@ const postgres: NodeConfigSchema = {
   customPanelOwnsMeta: true,
 };
 
+// Painel dedicado (RedisPanel): ConnectionPicker em modo `name` + operação +
+// args. `fields` continua servindo pra init/validação leve caso o painel
+// fique fora do caminho. `connectionString` legado é aceito read-only mas
+// não aparece na UI nova.
 const redis: NodeConfigSchema = {
   title: "Redis",
   fields: [
-    {
-      name: "connectionString",
-      label: "Connection string",
-      type: "text",
-      required: true,
-      placeholder: "{{ env.REDIS_URL }}",
-    },
     {
       name: "operation",
       label: "Operação",
@@ -148,11 +149,14 @@ const redis: NodeConfigSchema = {
       description: "Lista de argumentos posicionais — ex: chave, valor, ttl.",
     },
   ],
+  customPanel: RedisPanel,
+  customPanelOwnsMeta: true,
 };
 
 const code: NodeConfigSchema = {
   title: "Código JavaScript",
   description: "Snippet JS executado pelo engine; o retorno vira o output do nó.",
+  dialogSize: "wide",
   fields: [
     { name: "code", label: "Corpo da função", type: "code", language: "js", required: true },
     { name: "timeoutMs", label: "Timeout (ms)", type: "number", min: 0 },
@@ -163,6 +167,7 @@ const code: NodeConfigSchema = {
 const respond_to_webhook: NodeConfigSchema = {
   title: "Responder webhook",
   description: "Envia a resposta HTTP custom em workflows disparados via webhook síncrono.",
+  dialogSize: "wide",
   fields: [
     {
       name: "status",
@@ -249,6 +254,7 @@ const wait: NodeConfigSchema = {
 const execute_workflow: NodeConfigSchema = {
   title: "Sub-workflow",
   description: "Executa outro workflow do org como sub-run síncrono.",
+  dialogSize: "wide",
   fields: [
     { name: "workflowId", label: "Workflow ID", type: "text", required: true },
     { name: "input", label: "Input", type: "json" },
@@ -362,6 +368,7 @@ const ENCODINGS = [
 
 const crypto: NodeConfigSchema = {
   title: "Crypto",
+  dialogSize: "wide",
   fields: [
     { name: "operation", label: "Operação", type: "select", required: true, options: CRYPTO_OPS },
     {
@@ -438,6 +445,7 @@ const FILTER_OPS = [
 
 const item_lists: NodeConfigSchema = {
   title: "Listas",
+  dialogSize: "wide",
   fields: [
     { name: "operation", label: "Operação", type: "select", required: true, options: LIST_OPS },
     {
@@ -592,53 +600,14 @@ const embeddings: NodeConfigSchema = {
   ],
 };
 
-const VECTOR_OPS = [
-  { value: "insert", label: "insert" },
-  { value: "search", label: "search" },
-];
-
+// Painel dedicado (VectorStorePanel): seções Operação / Conexão / Teste / Histórico.
 const vector_store: NodeConfigSchema = {
-  title: "Vector store",
-  description: "Conecta-se a um Postgres externo com extensão pgvector.",
-  fields: [
-    {
-      name: "connectionString",
-      label: "Connection string",
-      type: "text",
-      required: true,
-      placeholder: "{{ env.VECTOR_DB_URL }}",
-    },
-    { name: "table", label: "Tabela", type: "text", placeholder: "documents" },
-    { name: "operation", label: "Operação", type: "select", required: true, options: VECTOR_OPS },
-    {
-      name: "content",
-      label: "Conteúdo",
-      type: "textarea",
-      rows: 4,
-      visibleWhen: (v) => v.operation === "insert",
-    },
-    {
-      name: "embedding",
-      label: "Embedding (number[])",
-      type: "json",
-      placeholder: "[0.012, -0.034, ...]",
-      description: "Vetor numérico. Tipicamente vindo de `{{ steps.embed.embedding }}`.",
-    },
-    {
-      name: "metadata",
-      label: "Metadata",
-      type: "json",
-      visibleWhen: (v) => v.operation === "insert",
-    },
-    {
-      name: "topK",
-      label: "Top K",
-      type: "number",
-      min: 1,
-      placeholder: "5",
-      visibleWhen: (v) => v.operation === "search",
-    },
-  ],
+  title: "Vector store (pgvector)",
+  description: "Insert / search em tabelas pgvector com env vars decriptadas.",
+  dialogSize: "wide",
+  fields: [],
+  customPanel: VectorStorePanel,
+  customPanelOwnsMeta: true,
 };
 
 const CHAT_OPS = [
@@ -648,6 +617,7 @@ const CHAT_OPS = [
 
 const chat_memory: NodeConfigSchema = {
   title: "Memória de chat",
+  dialogSize: "wide",
   fields: [
     {
       name: "connectionString",
@@ -691,6 +661,7 @@ const chat_memory: NodeConfigSchema = {
 const document_loader: NodeConfigSchema = {
   title: "Document loader",
   description: "Faz chunking do texto pra alimentar embeddings/vector store.",
+  dialogSize: "wide",
   fields: [
     { name: "text", label: "Texto", type: "textarea", required: true, rows: 6 },
     { name: "chunkSize", label: "Chunk size", type: "number", min: 1, placeholder: "1000" },
@@ -723,6 +694,16 @@ const CONTAINER_COLORS = [
   { value: "amber", label: "Amber" },
   { value: "rose", label: "Rose" },
 ];
+
+// Painel dedicado (S3Panel): seções Operação / Conexão / Teste / Histórico.
+// `fields` vazio — toda a validação acontece dentro do painel.
+const s3: NodeConfigSchema = {
+  title: "S3 (objeto)",
+  description: "GET / PUT / DELETE / LIST / HEAD em buckets S3-compatíveis (AWS, R2, MinIO, Spaces).",
+  fields: [],
+  customPanel: S3Panel,
+  customPanelOwnsMeta: true,
+};
 
 const container: NodeConfigSchema = {
   title: "Frame / Grupo",
@@ -758,6 +739,7 @@ export const NODE_CONFIG_SCHEMAS: Record<string, NodeConfigSchema> = {
   vector_store,
   chat_memory,
   document_loader,
+  s3,
   sticky_note,
   container,
 };

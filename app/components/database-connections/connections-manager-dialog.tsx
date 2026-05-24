@@ -150,7 +150,7 @@ export function ConnectionsManagerDialog({
   }
 
   async function handleDelete(id: string) {
-    if (!window.confirm("Deletar essa connection? Nodes que a referenciam vão falhar.")) return;
+    if (!window.confirm("Deletar essa credencial? Nodes que a referenciam vão falhar.")) return;
     try {
       await dbConnections.remove(workflowId, id);
       if (form.id === id) resetForm();
@@ -183,11 +183,13 @@ export function ConnectionsManagerDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Database className="size-5" />
-            Database connections
+            Credenciais tipadas
           </DialogTitle>
           <DialogDescription>
-            Cadastre Postgres/Redis usados pelos nodes deste workflow. URLs ficam cifradas em
-            repouso (AES-256-GCM).
+            Cadastre Postgres/Redis usados pelos nodes deste workflow — credenciais tipadas
+            oferecem teste de conexão e introspecção de schema. URLs ficam cifradas em
+            repouso (AES-256-GCM). Para secrets simples (API keys, webhooks), use Variáveis
+            de ambiente.
           </DialogDescription>
         </DialogHeader>
 
@@ -212,7 +214,7 @@ export function ConnectionsManagerDialog({
             <div className="flex-1 overflow-y-auto rounded-md border">
               {items.length === 0 ? (
                 <div className="p-4 text-center text-xs text-muted-foreground">
-                  {loading ? "Carregando…" : "Nenhuma connection ainda."}
+                  {loading ? "Carregando…" : "Nenhuma credencial ainda."}
                 </div>
               ) : (
                 <ul className="divide-y">
@@ -298,7 +300,7 @@ export function ConnectionsManagerDialog({
           <div className="flex flex-col gap-3 overflow-y-auto rounded-md border bg-muted/30 p-3">
             <div className="flex items-center justify-between">
               <h3 className="text-sm font-medium">
-                {editing ? "Editar" : "Nova connection"}
+                {editing ? "Editar" : "Nova credencial"}
               </h3>
               {editing && (
                 <Button

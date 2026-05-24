@@ -38,6 +38,14 @@ export type EdgeStyle = {
   thickness: number;
   /** Marca de seta no destino. */
   arrow: boolean;
+  /**
+   * Direção do pico viajante quando `gradient + animated`.
+   * - `alternate`: vai e volta (padrão histórico).
+   * - `forward`: contínuo do início ao destino, reinicia no início.
+   * - `backward`: contínuo do destino ao início, reinicia no destino.
+   * Ignorado quando `gradient` ou `animated` estão desligados.
+   */
+  flowDirection: "alternate" | "forward" | "backward";
 };
 
 export const DEFAULT_EDGE_STYLE: EdgeStyle = {
@@ -49,6 +57,7 @@ export const DEFAULT_EDGE_STYLE: EdgeStyle = {
   dashed: false,
   thickness: 1.5,
   arrow: false,
+  flowDirection: "forward",
 };
 
 type FlowState = {
@@ -58,6 +67,14 @@ type FlowState = {
   libraryOpen: boolean;
   backgroundVariant: BackgroundVariant;
   edgeStyle: EdgeStyle;
+  presentationMode: boolean;
+  historyVisible: boolean;
+  /**
+   * Snap-to-grid permanente ao arrastar nodes. Quando ligado, o canvas cola
+   * na grade do background (16px). Segurar Shift durante drag inverte o
+   * estado momentaneamente (off → on / on → off) — Figma-like override.
+   */
+  snapToGrid: boolean;
 
   setTool: (tool: ToolMode) => void;
   setLocked: (locked: boolean) => void;
@@ -69,6 +86,10 @@ type FlowState = {
   setBackgroundVariant: (variant: BackgroundVariant) => void;
   setEdgeStyle: (style: Partial<EdgeStyle>) => void;
   resetEdgeStyle: () => void;
+  togglePresentationMode: () => void;
+  toggleHistoryVisible: () => void;
+  setSnapToGrid: (snap: boolean) => void;
+  toggleSnapToGrid: () => void;
 };
 
 export const useFlowStore = create<FlowState>()(
@@ -80,6 +101,9 @@ export const useFlowStore = create<FlowState>()(
       libraryOpen: false,
       backgroundVariant: BackgroundVariant.Dots,
       edgeStyle: DEFAULT_EDGE_STYLE,
+      presentationMode: false,
+      historyVisible: false,
+      snapToGrid: false,
 
       setTool: (tool) => set({ tool }),
       setLocked: (locked) => set({ locked }),
@@ -95,6 +119,10 @@ export const useFlowStore = create<FlowState>()(
       setBackgroundVariant: (backgroundVariant) => set({ backgroundVariant }),
       setEdgeStyle: (style) => set((s) => ({ edgeStyle: { ...s.edgeStyle, ...style } })),
       resetEdgeStyle: () => set({ edgeStyle: DEFAULT_EDGE_STYLE }),
+      togglePresentationMode: () => set((s) => ({ presentationMode: !s.presentationMode })),
+      toggleHistoryVisible: () => set((s) => ({ historyVisible: !s.historyVisible })),
+      setSnapToGrid: (snapToGrid) => set({ snapToGrid }),
+      toggleSnapToGrid: () => set((s) => ({ snapToGrid: !s.snapToGrid })),
     }),
     {
       name: "flow-ui",
@@ -104,6 +132,7 @@ export const useFlowStore = create<FlowState>()(
         miniMapVisible: s.miniMapVisible,
         backgroundVariant: s.backgroundVariant,
         edgeStyle: s.edgeStyle,
+        snapToGrid: s.snapToGrid,
       }),
       // Merge raso por padrão deixa campos novos do `edgeStyle` como
       // `undefined` quando o localStorage tem uma versão antiga do shape.

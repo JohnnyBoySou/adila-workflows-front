@@ -10,6 +10,7 @@ type Options = {
   onAutoLayout: () => void;
   onUndo: () => void;
   onRedo: () => void;
+  onTogglePresentation?: () => void;
 };
 
 type ShortcutActions = {
@@ -30,6 +31,7 @@ export function useFlowShortcuts({
   onAutoLayout,
   onUndo,
   onRedo,
+  onTogglePresentation,
 }: Options): ShortcutActions {
   const { getNodes, getEdges, setNodes, setEdges, fitView, zoomTo, zoomIn, zoomOut } =
     useReactFlow();
@@ -186,6 +188,7 @@ export function useFlowShortcuts({
   // View toggles
   useHotkeys("l", () => useFlowStore.getState().toggleLock(), { preventDefault: true });
   useHotkeys("m", () => useFlowStore.getState().toggleMiniMap(), { preventDefault: true });
+  useHotkeys("mod+shift+p", () => onTogglePresentation?.(), { preventDefault: true });
 
   // Arrow-key nudge (1px; Shift = 10px) — disabled when an input/textarea is focused
   const nudgeOpts = { preventDefault: true, enableOnFormTags: false } as const;

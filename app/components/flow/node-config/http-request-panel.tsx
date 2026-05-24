@@ -11,8 +11,25 @@
  *   auth: { type, ...campos por tipo },
  *   timeoutMs, retry: { count, delayMs }, followRedirects, skipSslVerify, proxy
  */
-import { ClipboardPaste, Globe, KeyRound, ListChecks, Loader2, Settings2, ShieldCheck } from "lucide-react";
+import {
+  ClipboardPaste,
+  Globe,
+  History,
+  KeyRound,
+  ListChecks,
+  Loader2,
+  RefreshCw,
+  Send,
+  Settings2,
+  ShieldCheck,
+} from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import { useMutation, useQuery } from "@tanstack/react-query";
+
+import { useWorkflowId } from "../workflow-context";
+import { queryKeys } from "~/lib/query-keys";
+import * as nodesApi from "~/services/workflow-nodes";
+import type { NodeInvocation } from "~/services/workflow-nodes";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -82,6 +99,8 @@ const BASE_SECTIONS = [
   { id: "body", label: "Body", icon: ListChecks },
   { id: "auth", label: "Autenticação", icon: KeyRound },
   { id: "advanced", label: "Avançado", icon: Settings2 },
+  { id: "test", label: "Teste", icon: Send },
+  { id: "history", label: "Histórico", icon: History },
 ] as const satisfies ReadonlyArray<SectionItem>;
 
 type SectionId = (typeof BASE_SECTIONS)[number]["id"];
@@ -128,8 +147,9 @@ function readRetry(v: unknown): RetryValue {
 /* Painel                                                                      */
 /* -------------------------------------------------------------------------- */
 
-export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps) {
+export function HttpRequestPanel({ values, onChange, onError, nodeId }: CustomPanelProps) {
   const [section, setSection] = useState<SectionId>("request");
+  const workflowId = useWorkflowId() ?? "";
 
   const url = readString(values.url);
   const method = readString(values.method, "GET");
@@ -218,6 +238,12 @@ export function HttpRequestPanel({ values, onChange, onError }: CustomPanelProps
           proxy={readString(values.proxy)}
           onChange={(patch) => onChange(patch)}
         />
+      )}
+      {section === "test" && (
+        <TestSection workflowId={workflowId} nodeId={nodeId} values={values} />
+      )}
+      {section === "history" && (
+        <HistorySection workflowId={workflowId} nodeId={nodeId} />
       )}
     </Sections>
   );
@@ -801,5 +827,316 @@ function CurlImportDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Seção Teste — dispara dry-run no backend (sem CORS, sem persistir step)    */
+/* -------------------------------------------------------------------------- */
+
+function TestSection({
+  workflowId,
+  nodeId,
+  values,
+}: {
+  workflowId: string;
+  nodeId?: string;
+  values: Record<string, unknown>;
+}) {
+  const [inputText, setInputText] = useState("{}");
+  const [inputErr, setInputErr] = useState<string | null>(null);
+
+  const mutation = useMutation({
+    mutationFn: () => {
+      let parsed: Record<string, unknown> = {};
+      const t = inputText.trim();
+      if (t) parsed = JSON.parse(t) as Record<string, unknown>;
+      return nodesApi.dryRunHttp(workflowId, nodeId!, {
+        config: values,
+        input: parsed,
+      });
+    },
+  });
+
+  if (!workflowId || !nodeId) {
+    return (
+      <EmptyHint>Salve o workflow antes de testar — o teste depende do nodeId.</EmptyHint>
+    );
+  }
+
+  function run() {
+    setInputErr(null);
+    const t = inputText.trim();
+    if (t) {
+      try {
+        JSON.parse(t);
+      } catch (err) {
+        setInputErr((err as Error).message);
+        return;
+      }
+    }
+    mutation.mutate();
+  }
+
+  const result = mutation.data;
+  const out = result && result.ok ? (result.output as Record<string, unknown>) : null;
+  const status = out && typeof out.status === "number" ? (out.status as number) : null;
+  const ok = status !== null && status >= 200 && status < 300;
+  const responseBody = out ? out.body : null;
+  const respHeaders = out && typeof out.headers === "object" ? (out.headers as Record<string, unknown>) : null;
+
+  return (
+    <div className="space-y-3">
+      <SectionHeader
+        title="Disparar agora"
+        hint="Executa a requisição via backend (sem CORS, sem persistir step). Env vars não são resolvidas — use um run real pra isso."
+      />
+
+      <div className="space-y-1">
+        <Label className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+          Input simulado (JSON)
+        </Label>
+        <Textarea
+          rows={3}
+          spellCheck={false}
+          className="font-mono text-[11px]"
+          value={inputText}
+          onChange={(e) => {
+            setInputText(e.target.value);
+            if (inputErr) setInputErr(null);
+          }}
+          placeholder='{ "userId": "abc" }'
+        />
+        {inputErr && <p className="text-[10px] text-destructive">JSON inválido: {inputErr}</p>}
+        <p className="text-[10px] text-muted-foreground">
+          Disponível como <code className="rounded bg-muted px-1">{`{{input.x}}`}</code> nos
+          campos de URL/headers/body.
+        </p>
+      </div>
+
+      <div className="flex justify-end">
+        <Button size="sm" onClick={run} disabled={mutation.isPending}>
+          {mutation.isPending ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Send className="size-4" />
+          )}
+          Enviar
+        </Button>
+      </div>
+
+      {mutation.isError && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5">
+          <p className="text-[11px] text-destructive">
+            Falha de rede: {(mutation.error as Error).message}
+          </p>
+        </div>
+      )}
+
+      {result && !result.ok && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-2 py-1.5">
+          <p className="text-[10px] font-medium text-destructive">Handler falhou</p>
+          <p className="mt-0.5 break-words text-[11px] text-destructive/90">{result.error}</p>
+          <p className="mt-1 text-[10px] text-muted-foreground">{result.durationMs}ms</p>
+        </div>
+      )}
+
+      {out && (
+        <div
+          className={cn(
+            "space-y-2 rounded-md border p-2",
+            ok ? "border-emerald-500/40 bg-emerald-500/5" : "border-rose-500/40 bg-rose-500/5",
+          )}
+        >
+          <div className="flex items-center justify-between gap-2 text-[11px]">
+            <span className={cn("font-medium", ok ? "text-emerald-600" : "text-rose-600")}>
+              HTTP {status ?? "?"} {typeof out.attempts === "number" && `· ${out.attempts} tent.`}
+            </span>
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {result?.durationMs}ms
+            </span>
+          </div>
+
+          {respHeaders && Object.keys(respHeaders).length > 0 && (
+            <details className="rounded-md border border-border bg-background/60">
+              <summary className="cursor-pointer select-none px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                Headers ({Object.keys(respHeaders).length})
+              </summary>
+              <pre className="overflow-auto whitespace-pre-wrap break-words px-2 py-1 font-mono text-[10px]">
+                {Object.entries(respHeaders)
+                  .map(([k, v]) => `${k}: ${String(v)}`)
+                  .join("\n")}
+              </pre>
+            </details>
+          )}
+
+          <div>
+            <p className="mb-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Body
+            </p>
+            <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words rounded-md border border-border bg-background/60 p-2 font-mono text-[10px] leading-relaxed">
+              {responseBody === null || responseBody === undefined
+                ? "(vazio)"
+                : typeof responseBody === "string"
+                  ? responseBody
+                  : safeStringify(responseBody)}
+            </pre>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Seção Histórico — últimas execuções deste node em runs reais                */
+/* -------------------------------------------------------------------------- */
+
+function HistorySection({ workflowId, nodeId }: { workflowId: string; nodeId?: string }) {
+  const limit = 25;
+  const query = useQuery({
+    queryKey: queryKeys.workflowNodes.invocations(workflowId, nodeId ?? "", limit),
+    queryFn: () => nodesApi.listInvocations(workflowId, nodeId!, limit),
+    enabled: Boolean(workflowId && nodeId),
+  });
+
+  if (!workflowId || !nodeId) {
+    return (
+      <EmptyHint>Salve o workflow antes de ver histórico — depende do nodeId.</EmptyHint>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      <div className="flex items-start justify-between gap-2">
+        <SectionHeader
+          title="Últimas execuções"
+          hint={`As ${limit} chamadas mais recentes deste node em runs reais.`}
+        />
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => query.refetch()}
+          disabled={query.isFetching}
+          className="h-7 px-2 text-[11px]"
+        >
+          <RefreshCw className={cn("size-3.5", query.isFetching && "animate-spin")} />
+          Atualizar
+        </Button>
+      </div>
+
+      {query.isPending && (
+        <div className="flex items-center gap-2 px-2 py-4 text-[11px] text-muted-foreground">
+          <Loader2 className="size-3.5 animate-spin" /> Carregando…
+        </div>
+      )}
+
+      {query.data && query.data.length === 0 && (
+        <EmptyHint>Nenhuma execução registrada ainda.</EmptyHint>
+      )}
+
+      {query.data && query.data.length > 0 && (
+        <div className="overflow-hidden rounded-md border border-border bg-background">
+          <table className="w-full text-[11px]">
+            <thead className="bg-muted/40 text-[10px] uppercase tracking-wide text-muted-foreground">
+              <tr>
+                <th className="px-2 py-1.5 text-left">Quando</th>
+                <th className="px-2 py-1.5 text-left">Status</th>
+                <th className="px-2 py-1.5 text-right">Duração</th>
+                <th className="px-2 py-1.5 text-right">HTTP</th>
+                <th className="px-2 py-1.5 text-left">Resumo</th>
+              </tr>
+            </thead>
+            <tbody>
+              {query.data.map((inv) => (
+                <InvocationRow key={inv.id} inv={inv} />
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InvocationRow({ inv }: { inv: NodeInvocation }) {
+  const httpStatus =
+    inv.output && typeof (inv.output as Record<string, unknown>).status === "number"
+      ? ((inv.output as Record<string, unknown>).status as number)
+      : null;
+
+  const summary = useMemo(() => {
+    if (inv.status === "failed" && inv.error) {
+      const msg = (inv.error as Record<string, unknown>).message;
+      return typeof msg === "string" ? msg : safeStringify(inv.error);
+    }
+    if (inv.output) {
+      const body = (inv.output as Record<string, unknown>).body;
+      const s = typeof body === "string" ? body : safeStringify(body);
+      return s.length > 90 ? `${s.slice(0, 90)}…` : s;
+    }
+    return "—";
+  }, [inv.output, inv.error, inv.status]);
+
+  return (
+    <tr className="border-t border-border/60">
+      <td className="px-2 py-1.5 text-muted-foreground">
+        {new Date(inv.createdAt).toLocaleString("pt-BR")}
+      </td>
+      <td className="px-2 py-1.5">
+        <InvocationStatusBadge status={inv.status} />
+      </td>
+      <td className="px-2 py-1.5 text-right tabular-nums text-muted-foreground">
+        {inv.durationMs !== null ? `${inv.durationMs}ms` : "—"}
+      </td>
+      <td className="px-2 py-1.5 text-right tabular-nums">
+        {httpStatus !== null ? (
+          <span
+            className={cn(
+              "font-mono text-[10px]",
+              httpStatus >= 200 && httpStatus < 300
+                ? "text-emerald-600"
+                : httpStatus >= 400
+                  ? "text-rose-600"
+                  : "text-muted-foreground",
+            )}
+          >
+            {httpStatus}
+          </span>
+        ) : (
+          <span className="text-muted-foreground">—</span>
+        )}
+      </td>
+      <td className="px-2 py-1.5 font-mono text-[10px] text-muted-foreground">{summary}</td>
+    </tr>
+  );
+}
+
+function InvocationStatusBadge({ status }: { status: NodeInvocation["status"] }) {
+  const map: Record<NodeInvocation["status"], string> = {
+    success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400",
+    failed: "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400",
+    running: "border-sky-500/40 bg-sky-500/10 text-sky-700 dark:text-sky-400",
+    pending: "border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-400",
+    skipped: "border-border bg-muted text-muted-foreground",
+    cancelled: "border-border bg-muted text-muted-foreground",
+  };
+  return (
+    <span
+      className={cn(
+        "rounded-md border px-1.5 py-0.5 font-mono text-[10px] uppercase",
+        map[status],
+      )}
+    >
+      {status}
+    </span>
+  );
+}
+
+function EmptyHint({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="rounded-md border border-dashed border-border bg-background/40 px-3 py-4 text-center text-[11px] text-muted-foreground">
+      {children}
+    </div>
   );
 }

@@ -68,6 +68,8 @@ export interface CustomPanelProps {
   onChange: (patch: Record<string, unknown>) => void;
   /** Permite ao painel reportar erros de validação por campo (trava o Salvar). */
   onError?: (name: string, msg: string | null) => void;
+  /** ID do node sendo editado. Permite consultar histórico/dry-run no backend. */
+  nodeId?: string;
   /**
    * Meta editor-only (title/description do card). Só presente quando
    * `customPanelOwnsMeta` está ativo no schema — nesse caso o dialog

@@ -221,6 +221,7 @@ export function NodeConfigDialog({
             >
               <schema.customPanel
                 values={draft}
+                nodeId={nodeId}
                 onChange={(patch) =>
                   setDraft((prev) => {
                     const next = { ...prev };

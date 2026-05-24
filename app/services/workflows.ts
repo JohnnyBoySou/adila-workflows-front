@@ -144,6 +144,36 @@ export function importFromN8n(
   );
 }
 
+export type PromoteBulkResponse = {
+  version: {
+    id: string;
+    workflowId: string;
+    version: number;
+    name: string | null;
+    createdAt: string;
+  };
+  promoted: {
+    trigger: { id: string; name: string; workflowVersionId: string | null };
+    previousWorkflowVersionId: string | null;
+  }[];
+};
+
+/**
+ * Bulk promote — aponta N triggers do workflow para a mesma versão em
+ * uma transação. `triggerIds` omitido = todos os triggers do workflow.
+ */
+export function promoteBulk(
+  workflowId: string,
+  body: { workflowVersionId: string; triggerIds?: string[] },
+): Promise<PromoteBulkResponse> {
+  return unwrap(
+    $fetch<PromoteBulkResponse>(`/workflows/${workflowId}/promote`, {
+      method: "POST",
+      body,
+    }),
+  );
+}
+
 /** Dispara uma execução manual do workflow. */
 export function run(
   id: string,

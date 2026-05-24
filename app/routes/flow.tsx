@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Link, useParams } from "react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Loader2 } from "lucide-react";
 
+import type { PersistedNode } from "~/components/flow/definition";
 import type { Route } from "./+types/flow";
 import { WorkflowCanvas, type WorkflowCanvasHandle } from "~/components/flow/workflow-canvas";
 import {
@@ -13,14 +14,22 @@ import { FlowTopBar, type FlowTab, type SaveState } from "~/components/flow/flow
 import { WorkflowInfoDialog, type WorkflowInfo } from "~/components/flow/workflow-info-dialog";
 import { ConnectionsManagerDialog } from "~/components/database-connections/connections-manager-dialog";
 import { ExecutionsView } from "~/components/flow/executions-view";
+import { PerformanceView } from "~/components/flow/performance-view";
 import { Button } from "~/components/ui/button";
 import * as workflowsApi from "~/services/workflows";
 import * as runsApi from "~/services/runs";
-import * as workflowVersionsApi from "~/services/workflow-versions";
 import type { RunStatus } from "~/services/runs";
 import { queryKeys } from "~/lib/query-keys";
 import { cn } from "~/lib/utils";
 import { pinnedDataApi } from "~/stores/pinned-data";
+import { useSession } from "~/lib/auth-client";
+import { useCollaboration, type RemotePresence } from "~/hooks/use-collaboration";
+import { useOrgMembersIndex } from "~/hooks/use-org-members";
+import { useCollabDoc } from "~/hooks/use-collab-doc";
+import type { PersistedDefinition } from "~/components/flow/definition";
+import { CollabPresenceStack } from "~/components/flow/collab-presence-stack";
+import { DraftAheadBanner } from "~/components/flow/draft-ahead-banner";
+import { PublishVersionDialog } from "~/components/flow/publish-version-dialog";
 
 export function meta({}: Route.MetaArgs) {
   return [
@@ -42,11 +51,44 @@ export default function FlowRoute() {
 
   const [tab, setTab] = useState<FlowTab>("editor");
   const [infoOpen, setInfoOpen] = useState(false);
+  const [infoNodesSnapshot, setInfoNodesSnapshot] = useState<PersistedNode[]>([]);
   const [connectionsOpen, setConnectionsOpen] = useState(false);
+  const [publishDialogOpen, setPublishDialogOpen] = useState(false);
   const [focusedRunId, setFocusedRunId] = useState<string | null>(null);
-  const [publishState, setPublishState] = useState<
-    "idle" | "publishing" | "published" | "already_existed"
-  >("idle");
+
+  const { data: sessionData } = useSession();
+  const collabUser = sessionData?.user
+    ? {
+        id: sessionData.user.id,
+        name: sessionData.user.name,
+        email: sessionData.user.email,
+        image: sessionData.user.image ?? null,
+      }
+    : null;
+  // Refs para quebrar o ciclo entre useCollaboration (precisa do onYjsUpdate
+  // do useCollabDoc) e useCollabDoc (precisa do sendYjsUpdate do collab).
+  const remoteYjsHandlerRef = useRef<((b64: string) => void) | null>(null);
+  const handleIncomingYjs = useCallback((b64: string) => {
+    remoteYjsHandlerRef.current?.(b64);
+  }, []);
+
+  const collab = useCollaboration({
+    workflowId: id ?? "",
+    user: collabUser,
+    enabled: !!id && tab === "editor",
+    onYjsUpdate: handleIncomingYjs,
+  });
+  const { index: membersIndex } = useOrgMembersIndex();
+  const enrichedOthers = useMemo<RemotePresence[]>(
+    () =>
+      collab.others.map((p) => {
+        const m = membersIndex.get(p.userId);
+        return m
+          ? { ...p, displayName: m.name || m.email, email: m.email, image: m.image }
+          : p;
+      }),
+    [collab.others, membersIndex],
+  );
 
   const queryClient = useQueryClient();
   const workflowQuery = useQuery({
@@ -97,11 +139,29 @@ export default function FlowRoute() {
     saveMutation.mutate(def as unknown as Record<string, unknown>);
   }, [id, saveMutation]);
 
+  // ── Sincronização Yjs do documento ─────────────────────────────────────
+  const collabDoc = useCollabDoc({
+    workflowId: id ?? "",
+    enabled: !!id && tab === "editor",
+    initialDefinition: (workflowQuery.data?.definition ?? null) as PersistedDefinition | null,
+    canvasRef,
+    sendYjsUpdate: collab.sendYjsUpdate,
+  });
+  useEffect(() => {
+    remoteYjsHandlerRef.current = collabDoc.onRemoteUpdate;
+    return () => {
+      remoteYjsHandlerRef.current = null;
+    };
+  }, [collabDoc.onRemoteUpdate]);
+
   const handleDirty = useCallback(() => {
     setSaveState((prev) => (prev === "saving" ? prev : "dirty"));
     if (debounceTimer.current) clearTimeout(debounceTimer.current);
     debounceTimer.current = setTimeout(flushSave, AUTO_SAVE_DEBOUNCE_MS);
-  }, [flushSave]);
+    // Propaga a mudança para o Y.Doc — o broadcast Yjs sai pelo WS imediato
+    // (não espera o debounce de save).
+    collabDoc.pushLocalChange();
+  }, [flushSave, collabDoc]);
 
   // Cmd/Ctrl+S → flush imediato. Capture: bate antes de browser tentar
   // o save-page dele (mesmo `preventDefault` ainda é necessário).
@@ -178,23 +238,6 @@ export default function FlowRoute() {
     runMutation.mutate();
   }, [id, saveState, flushSave, runMutation]);
 
-  const handlePublish = useCallback(async () => {
-    if (!id || publishState === "publishing") return;
-    // Persiste o draft antes de publicar para garantir que o snapshot reflita
-    // o estado atual do canvas, não o último save automático.
-    if (saveState === "dirty") flushSave();
-    setPublishState("publishing");
-    try {
-      const { alreadyExisted } = await workflowVersionsApi.publish(id);
-      setPublishState(alreadyExisted ? "already_existed" : "published");
-      queryClient.invalidateQueries({ queryKey: queryKeys.workflowVersions.list(id) });
-    } catch {
-      setPublishState("idle");
-    } finally {
-      setTimeout(() => setPublishState("idle"), 3000);
-    }
-  }, [id, publishState, saveState, flushSave, queryClient]);
-
   // Botão "play" dentro do node toolbar emite via window — escutamos aqui
   // pra disparar a execução sem acoplar o componente leaf à mutation.
   // (O backend ainda não suporta start-from-node, então hoje sempre roda o
@@ -250,6 +293,10 @@ export default function FlowRoute() {
               workflowId={workflow.id}
               initialDefinition={workflow.definition}
               onDirtyChange={handleDirty}
+              remoteCursors={enrichedOthers}
+              onCursorMove={collab.sendCursor}
+              onSelectionChange={collab.sendSelection}
+              onViewportChange={collab.sendViewport}
             />
           ) : (
             <LoadingState />
@@ -262,6 +309,31 @@ export default function FlowRoute() {
             onFocusedRunHandled={() => setFocusedRunId(null)}
           />
         </div>
+        <div className={cn("absolute inset-0", tab === "performance" ? "block" : "hidden")}>
+          <PerformanceView
+            workflowId={workflow.id}
+            active={tab === "performance"}
+            onShowExecutions={(focusRunId) => {
+              if (focusRunId) setFocusedRunId(focusRunId);
+              setTab("executions");
+            }}
+          />
+        </div>
+        <div className="pointer-events-none absolute right-6 top-6 z-30 flex items-center">
+          <div className="pointer-events-auto rounded-full border bg-card/90 px-3 py-1.5 shadow-sm backdrop-blur">
+            <CollabPresenceStack status={collab.status} others={enrichedOthers} />
+          </div>
+        </div>
+        {tab === "editor" && (
+          <div className="pointer-events-none absolute left-1/2 top-6 z-30 flex -translate-x-1/2">
+            <DraftAheadBanner
+              workflowId={workflow.id}
+              draftDefinition={workflow.definition}
+              onPublish={() => setPublishDialogOpen(true)}
+              publishing={publishDialogOpen}
+            />
+          </div>
+        )}
         <FlowTopBar
           tab={tab}
           onTabChange={setTab}
@@ -269,9 +341,9 @@ export default function FlowRoute() {
           onConnectionsClick={() => setConnectionsOpen(true)}
           onSave={flushSave}
           onRun={handleRun}
-          onPublish={handlePublish}
+          onPublish={() => setPublishDialogOpen(true)}
           saveState={saveState}
-          publishState={publishState}
+          publishState="idle"
           lastSavedAt={lastSavedAt}
           hasActiveRun={hasActiveRun}
         />
@@ -279,15 +351,36 @@ export default function FlowRoute() {
 
       <WorkflowInfoDialog
         open={infoOpen}
-        onOpenChange={setInfoOpen}
+        onOpenChange={(next) => {
+          if (next) {
+            const def = canvasRef.current?.getDefinition();
+            setInfoNodesSnapshot(def?.nodes ?? []);
+          }
+          setInfoOpen(next);
+        }}
         info={info}
         onSave={handleInfoSave}
+        workflowId={workflow.id}
+        nodes={infoNodesSnapshot}
+        onOpenConnectionsManager={() => {
+          setInfoOpen(false);
+          setConnectionsOpen(true);
+        }}
       />
 
       <ConnectionsManagerDialog
         open={connectionsOpen}
         onOpenChange={setConnectionsOpen}
         workflowId={workflow.id}
+      />
+
+      <PublishVersionDialog
+        open={publishDialogOpen}
+        onOpenChange={setPublishDialogOpen}
+        workflowId={workflow.id}
+        onBeforePublish={() => {
+          if (saveState === "dirty") flushSave();
+        }}
       />
     </main>
   );

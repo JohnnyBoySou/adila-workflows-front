@@ -1,4 +1,5 @@
 import { useReactFlow } from "@xyflow/react";
+import { Lock, Unlock } from "lucide-react";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -19,6 +20,7 @@ type Props = {
   onDelete: () => void;
   onSelectAll: () => void;
   onAutoLayout: () => void;
+  onToggleLock?: () => void;
 };
 
 export function FlowContextMenu({
@@ -32,9 +34,13 @@ export function FlowContextMenu({
   onDelete,
   onSelectAll,
   onAutoLayout,
+  onToggleLock,
 }: Props) {
   const { getNodes } = useReactFlow();
-  const hasSelection = getNodes().some((n) => n.selected);
+  const selectedNodes = getNodes().filter((n) => n.selected);
+  const hasSelection = selectedNodes.length > 0;
+  const singleSelected = selectedNodes.length === 1;
+  const isLocked = singleSelected && !!(selectedNodes[0]?.data as Record<string, unknown>)?.locked;
 
   return (
     <ContextMenu>
@@ -98,6 +104,25 @@ export function FlowContextMenu({
           Auto-layout
           <ContextMenuShortcut>⇧A</ContextMenuShortcut>
         </ContextMenuItem>
+
+        {singleSelected && onToggleLock && (
+          <>
+            <ContextMenuSeparator />
+            <ContextMenuItem onClick={onToggleLock}>
+              {isLocked ? (
+                <>
+                  <Unlock className="mr-2 size-3.5" />
+                  Destravar nó
+                </>
+              ) : (
+                <>
+                  <Lock className="mr-2 size-3.5" />
+                  Travar nó
+                </>
+              )}
+            </ContextMenuItem>
+          </>
+        )}
       </ContextMenuContent>
     </ContextMenu>
   );

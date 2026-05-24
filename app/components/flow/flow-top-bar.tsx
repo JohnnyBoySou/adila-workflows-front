@@ -1,5 +1,6 @@
 import { Link } from "react-router";
 import {
+  Activity,
   Check,
   ChevronLeft,
   Database,
@@ -23,7 +24,7 @@ import {
 } from "~/components/ui/tooltip";
 import { cn } from "~/lib/utils";
 
-export type FlowTab = "editor" | "executions";
+export type FlowTab = "editor" | "executions" | "performance";
 
 export type SaveState = "idle" | "dirty" | "saving" | "saved" | "error";
 
@@ -107,8 +108,8 @@ export function FlowTopBar({
             size="icon-sm"
             className="rounded-full"
             onClick={onConnectionsClick}
-            aria-label="Database connections"
-            title="Database connections"
+            aria-label="Credenciais tipadas"
+            title="Credenciais tipadas"
           >
             <Database className="size-4" />
           </Button>
@@ -142,6 +143,14 @@ export function FlowTopBar({
                   <span className="relative inline-flex size-2 rounded-full bg-sky-500" />
                 </span>
               )}
+            </TabsTrigger>
+            <TabsTrigger
+              value="performance"
+              className="size-7 rounded-full p-0"
+              aria-label="Performance"
+              title="Performance"
+            >
+              <Activity className="size-4" />
             </TabsTrigger>
           </TabsList>
         </Tabs>

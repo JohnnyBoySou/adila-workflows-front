@@ -42,6 +42,10 @@ export const queryKeys = {
   triggers: {
     all: ["triggers"] as const,
     list: (workflowId: string) => ["triggers", "list", workflowId] as const,
+    invocations: (workflowId: string, triggerId: string, limit: number) =>
+      ["triggers", "invocations", workflowId, triggerId, limit] as const,
+    health: (workflowId: string, triggerId: string) =>
+      ["triggers", "health", workflowId, triggerId] as const,
   },
   environments: {
     all: ["environments"] as const,
@@ -49,11 +53,27 @@ export const queryKeys = {
     detail: (id: string) => ["environments", "detail", id] as const,
     variables: (environmentId: string) => ["environments", "variables", environmentId] as const,
   },
+  workflowNodes: {
+    all: ["workflow-nodes"] as const,
+    invocations: (workflowId: string, nodeId: string, limit: number) =>
+      ["workflow-nodes", "invocations", workflowId, nodeId, limit] as const,
+  },
+  workflowMetrics: {
+    all: ["workflow-metrics"] as const,
+    throughput: (workflowId: string) =>
+      ["workflow-metrics", "throughput", workflowId] as const,
+    nodeDurations: (workflowId: string, runs: number) =>
+      ["workflow-metrics", "node-durations", workflowId, runs] as const,
+  },
   workflowVersions: {
     all: ["workflow-versions"] as const,
     list: (workflowId: string) => ["workflow-versions", "list", workflowId] as const,
     detail: (workflowId: string, versionId: string) =>
       ["workflow-versions", "detail", workflowId, versionId] as const,
+  },
+  auditLogs: {
+    all: ["audit-logs"] as const,
+    byWorkflow: (workflowId: string) => ["audit-logs", "workflow", workflowId] as const,
   },
   organization: {
     all: ["organization"] as const,

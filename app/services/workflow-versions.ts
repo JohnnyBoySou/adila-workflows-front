@@ -1,4 +1,6 @@
 import { $fetch, unwrap } from "./index";
+import type { Trigger } from "./triggers";
+import type { Workflow } from "./workflows";
 
 export type WorkflowVersion = {
   id: string;
@@ -45,4 +47,75 @@ export async function publish(
     }),
   );
   return { version, alreadyExisted };
+}
+
+export type VersionDiff = {
+  nodes: {
+    added: { id: string; type: string; label?: string }[];
+    removed: { id: string; type: string; label?: string }[];
+    changed: { id: string; type: string; label?: string; fields: string[] }[];
+  };
+  edges: { added: number; removed: number };
+};
+
+export type DiffResponse = {
+  from: { id: string; version: number; name: string | null; createdAt: string };
+  to: { id: string; version: number; name: string | null; createdAt: string };
+  diff: VersionDiff;
+};
+
+/**
+ * Compara duas versões publicadas. Retorna nodes added/removed/changed e
+ * contagem agregada de edges added/removed. `position` (layout) é ignorado.
+ */
+export function diff(
+  workflowId: string,
+  fromVersionId: string,
+  toVersionId: string,
+): Promise<DiffResponse> {
+  return unwrap(
+    $fetch<DiffResponse>(
+      `/workflows/${workflowId}/versions/${fromVersionId}/diff/${toVersionId}`,
+    ),
+  );
+}
+
+/**
+ * Restaura a versão como `definition` corrente (draft). NÃO publica nova
+ * versão nem promove triggers — só substitui o conteúdo do canvas.
+ */
+export type PromotedTrigger = {
+  trigger: Trigger;
+  previousWorkflowVersionId: string | null;
+};
+
+export type PromoteBulkResponse = {
+  version: WorkflowVersion;
+  promoted: PromotedTrigger[];
+};
+
+/**
+ * Promove N triggers para a mesma versão em uma única chamada. `triggerIds`
+ * omitido = todos os triggers do workflow. Rejeita o lote inteiro se algum
+ * id não bater (não aceita promoções parciais silenciosas).
+ */
+export function promoteBulk(
+  workflowId: string,
+  versionId: string,
+  triggerIds?: string[],
+): Promise<PromoteBulkResponse> {
+  return unwrap(
+    $fetch<PromoteBulkResponse>(`/workflows/${workflowId}/versions/${versionId}/promote`, {
+      method: "POST",
+      body: triggerIds ? { triggerIds } : {},
+    }),
+  );
+}
+
+export function restore(workflowId: string, versionId: string): Promise<Workflow> {
+  return unwrap(
+    $fetch<Workflow>(`/workflows/${workflowId}/versions/${versionId}/restore`, {
+      method: "POST",
+    }),
+  );
 }
