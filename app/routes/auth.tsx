@@ -288,6 +288,11 @@ async function finishAuthRedirect(
     const result = await acceptOrganizationInvitation(invitationId);
     if (!result.ok) return result.message;
   }
+  // O `useSession()` é um store singleton do better-auth — se foi resolvido
+  // como `null` enquanto a tela de /auth estava aberta, ele NÃO refetcha
+  // sozinho ao montar o RequireAuth em /dashboard. Sem essa chamada,
+  // RequireAuth lê o cache stale (data=null) e redireciona pra /auth de novo.
+  await authClient.getSession();
   navigate(nextPath ?? "/dashboard", { replace: true });
   return null;
 }
