@@ -139,19 +139,14 @@ export function ExecutionsView({
   const runs = runsQuery.data ?? [];
 
   // Run recém-disparado pelo botão Play é selecionado automaticamente.
+  // Fora isso, a aba abre sem nenhum run selecionado — o usuário escolhe
+  // explicitamente o que quer inspecionar.
   useEffect(() => {
     if (focusedRunId) {
       setSelectedRunId(focusedRunId);
       onFocusedRunHandled?.();
     }
   }, [focusedRunId, onFocusedRunHandled]);
-
-  // Seleção default: primeiro run da lista assim que carrega.
-  useEffect(() => {
-    if (selectedRunId) return;
-    if (runs.length === 0) return;
-    setSelectedRunId(runs[0].id);
-  }, [runs, selectedRunId]);
 
   const counts = runs.reduce(
     (acc, r) => {

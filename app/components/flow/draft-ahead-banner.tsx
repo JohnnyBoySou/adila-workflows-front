@@ -10,11 +10,9 @@
  *  3. Se não existir nenhuma versão publicada, não renderiza nada
  *     (workflow nunca foi publicado).
  *
- * Comparação: `JSON.stringify(definition)` — não é canônico igual ao hash
- * do backend, então pode dar falso positivo se houver reordenação de
- * chaves. Aceitamos isso: o backend deduplica via hash na hora do publicar,
- * então um falso positivo só causa um "publicar" que devolve a versão
- * existente, sem criar registro novo.
+ * Comparação: usa `stableStringify` recursivo com chaves ordenadas — bate
+ * com o `hashDefinition` do backend, então não dá falso positivo por
+ * reordenação de chaves.
  */
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -24,6 +22,21 @@ import { Button } from "~/components/ui/button";
 import { queryKeys } from "~/lib/query-keys";
 import * as triggersApi from "~/services/triggers";
 import * as workflowVersionsApi from "~/services/workflow-versions";
+
+// Serializa com chaves ordenadas recursivamente — mesma lógica do
+// `hashDefinition` do backend, pra comparação determinística.
+function stableStringify(val: unknown): string {
+  if (val === null || typeof val !== "object") return JSON.stringify(val);
+  if (Array.isArray(val)) return "[" + val.map(stableStringify).join(",") + "]";
+  const keys = Object.keys(val as object).sort();
+  return (
+    "{" +
+    keys
+      .map((k) => JSON.stringify(k) + ":" + stableStringify((val as Record<string, unknown>)[k]))
+      .join(",") +
+    "}"
+  );
+}
 
 type Props = {
   workflowId: string;
@@ -61,7 +74,7 @@ export function DraftAheadBanner({ workflowId, draftDefinition, onPublish, publi
   const isAhead = useMemo(() => {
     if (!prodVersion) return false;
     try {
-      return JSON.stringify(draftDefinition) !== JSON.stringify(prodVersion.definition);
+      return stableStringify(draftDefinition) !== stableStringify(prodVersion.definition);
     } catch {
       return false;
     }
