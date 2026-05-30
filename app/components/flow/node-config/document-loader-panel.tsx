@@ -14,6 +14,7 @@
  *   metadata?: Record<string, unknown>
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Eye,
@@ -77,8 +78,8 @@ export function DocumentLoaderPanel({ values, onChange, onError, nodeId }: Custo
   const textMissing = text.trim() === "";
   const overlapInvalid = overlap >= chunkSize;
 
-  onError?.("text", textMissing ? "Informe o texto." : null);
-  onError?.("chunkOverlap", overlapInvalid ? "Overlap precisa ser menor que chunkSize." : null);
+  useFieldError(onError, "text", textMissing ? "Informe o texto." : null);
+  useFieldError(onError, "chunkOverlap", overlapInvalid ? "Overlap precisa ser menor que chunkSize." : null);
 
   function set(patch: Record<string, unknown>) {
     onChange(patch);

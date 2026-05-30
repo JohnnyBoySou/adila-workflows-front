@@ -11,6 +11,7 @@
  *   batchSize?: number  — default 1
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ArrowRight, History, Layers, Loader2, Repeat, Send, Workflow } from "lucide-react";
 
@@ -52,7 +53,7 @@ export function SplitInBatchesPanel({ values, onChange, onError, nodeId }: Custo
     (typeof itemsRaw === "string" ? itemsRaw.trim() === "" : !Array.isArray(itemsRaw) || itemsRaw.length === 0) &&
     !Array.isArray(itemsRaw);
 
-  onError?.("items", itemsMissing ? "Informe a coleção." : null);
+  useFieldError(onError, "items", itemsMissing ? "Informe a coleção." : null);
 
   function set(patch: Record<string, unknown>) {
     onChange(patch);

@@ -7,6 +7,7 @@
  * `nodes` — o `onDirtyChange` no Flow já cuida do save debounced.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, GripVertical, Maximize2, Pencil, Pin, PinOff } from "lucide-react";
 
 import {
   Dialog,
@@ -25,6 +26,7 @@ import { cn } from "~/lib/utils";
 import { useWorkflowId } from "./workflow-context";
 import { WebhookTriggerExtras } from "./webhook-trigger-extras";
 import { NODE_ICON_MAP } from "./node-library";
+import { JsonTree } from "./json-tree";
 
 /** Metadados editor-only do card no canvas (só nós executáveis). */
 export interface NodeMeta {
@@ -48,6 +50,22 @@ const ICON_COLOR_PALETTE = [
   "#64748b", // slate
 ];
 
+/**
+ * Item de input pra exibir na coluna esquerda — cada upstream contribui
+ * com seu próprio output. O usuário arrasta paths daqui pros campos
+ * (coluna meio). N8N usa estrutura similar com `$('Node').item.json`.
+ */
+export type UpstreamInput = {
+  /** ID do nó upstream (usado pra construir `steps.<id>.path`). */
+  nodeId: string;
+  /** Label humano (título customizado ou nodeType). */
+  label: string;
+  /** Output bruto do step desse upstream no run focado (ou pinned data). */
+  output: unknown;
+  /** `true` quando o dado veio de pinned data — mostra ícone amarelo. */
+  pinned?: boolean;
+};
+
 export interface NodeConfigDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,6 +83,29 @@ export interface NodeConfigDialogProps {
   values: Record<string, unknown>;
   /** Chamado com os valores e (se aplicável) o meta atualizado. */
   onSave: (next: Record<string, unknown>, meta?: NodeMeta) => void;
+
+  /**
+   * Dados de upstream pra coluna esquerda (Input). Quando vazio/undefined,
+   * o layout colapsa pra 1 coluna (Parameters apenas) — comportamento
+   * original. Quando passado, mostra árvore JSON arrastável.
+   */
+  upstreamInputs?: UpstreamInput[];
+  /** Output do próprio node no run focado (pra coluna direita). */
+  outputData?: unknown;
+  /** `true` se output deste nó está pinado. Toggle via `onTogglePin`. */
+  outputPinned?: boolean;
+  /**
+   * `true` quando `outputData` é um exemplo gerado (não veio de run real nem
+   * de pin). Mostra banner "Exemplo — execute pra ver o real" no topo.
+   */
+  outputIsSample?: boolean;
+  /** Pin/unpin do output atual — quando ausente, botão fica oculto. */
+  onTogglePin?: () => void;
+  /**
+   * Abre editor de output (JSON livre) — útil pra forjar saídas e testar
+   * o downstream sem rodar API/IA. Salvar no editor pina o JSON digitado.
+   */
+  onEditOutput?: () => void;
 }
 
 export function NodeConfigDialog({
@@ -75,6 +116,12 @@ export function NodeConfigDialog({
   meta,
   values,
   onSave,
+  upstreamInputs,
+  outputData,
+  outputPinned,
+  outputIsSample,
+  onTogglePin,
+  onEditOutput,
 }: NodeConfigDialogProps) {
   const schema = useMemo(() => getNodeConfigSchema(nodeType), [nodeType]);
   const workflowId = useWorkflowId();
@@ -87,6 +134,7 @@ export function NodeConfigDialog({
   // Erros internos dos editors (atualmente só JSON inválido). Indexado
   // pelo `name` do campo. O Salvar fica disabled enquanto houver entradas.
   const [parseErrors, setParseErrors] = useState<Record<string, string>>({});
+  const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     if (open) {
@@ -137,6 +185,42 @@ export function NodeConfigDialog({
     [validationErrors, parseErrors],
   );
 
+  // Resize livre das 3 colunas — guardamos a fração (0-1) das colunas left
+  // e right; meio = 1 - left - right. Persiste no localStorage.
+  // IMPORTANTE: hooks ANTES do early return `if (!schema)`.
+  const [colSplit, setColSplit] = useState<{ left: number; right: number }>(() => {
+    if (typeof window === "undefined") return { left: 0.28, right: 0.28 };
+    try {
+      const v = window.localStorage.getItem("adila.dialog.colSplit");
+      if (v) {
+        const p = JSON.parse(v);
+        if (typeof p.left === "number" && typeof p.right === "number") return p;
+      }
+    } catch {
+      /* fallback */
+    }
+    return { left: 0.28, right: 0.28 };
+  });
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem("adila.dialog.colSplit", JSON.stringify(colSplit));
+    }
+  }, [colSplit]);
+  const resetCols = useCallback(() => setColSplit({ left: 0.28, right: 0.28 }), []);
+
+  // sampleContext pro customPanel (também antes do early return)
+  const sampleContext = useMemo(() => {
+    if (!upstreamInputs || upstreamInputs.length === 0) return undefined;
+    const steps: Record<string, Record<string, unknown>> = {};
+    let input: Record<string, unknown> | undefined;
+    for (const up of upstreamInputs) {
+      const out = up.output && typeof up.output === "object" ? (up.output as Record<string, unknown>) : {};
+      steps[up.nodeId] = out;
+      if (!input) input = out;
+    }
+    return { input, vars: {}, env: {}, steps };
+  }, [upstreamInputs]);
+
   if (!schema) {
     return (
       <Dialog open={open} onOpenChange={onOpenChange}>
@@ -178,23 +262,13 @@ export function NodeConfigDialog({
   }
 
   const showMeta = meta !== undefined;
-  const currentTitle = metaDraft.title?.trim() || schema.title;
+  const currentTitle = metaDraft.title?.trim() || schema?.title || nodeType || "Sem configuração";
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         className={cn(
-          "flex flex-col gap-0",
-          schema.dialogSize === "full"
-            ? "h-[95vh] !max-w-[95vw] sm:!max-w-[95vw]"
-            : "max-h-[90vh]",
-          schema.dialogSize === "full"
-            ? ""
-            : schema.dialogSize === "wide"
-              ? "sm:max-w-6xl"
-              : schema.customPanel
-                ? "sm:max-w-4xl"
-                : "sm:max-w-2xl",
+          "flex flex-col gap-0 h-[95vh] !max-w-[95vw] sm:!max-w-[95vw]",
         )}
       >
         <DialogHeader className="-mx-4 -mt-4 rounded-t-xl border-b border-border bg-muted/50 px-4 pb-3 pt-4">
@@ -233,58 +307,239 @@ export function NodeConfigDialog({
           )}
         </DialogHeader>
 
+        {/* Layout 3 colunas estilo n8n: SEMPRE renderizado (mesmo sem dados).
+            Larguras controladas por `colSplit` (frações) e ajustáveis via drag
+            nas divisórias verticais. Reset pra 28%/44%/28% via botão "↺". */}
+        {true ? (
+          <div
+            className="flex flex-1 overflow-hidden border-t border-border"
+            ref={containerRef}
+          >
+            {/* ── Input (esquerda) ───────────────────────────────────────── */}
+            <div
+              className="flex flex-col overflow-hidden bg-muted/20"
+              style={{ flexBasis: `${colSplit.left * 100}%`, flexGrow: 0, flexShrink: 0 }}
+            >
+              <div className="border-b border-border bg-muted/40 px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Input — arraste pra um campo
+              </div>
+              <div className="flex-1 overflow-y-auto py-2">
+                {upstreamInputs && upstreamInputs.length > 0 ? (
+                  upstreamInputs.map((up) => (
+                    <UpstreamSection key={up.nodeId} upstream={up} />
+                  ))
+                ) : (
+                  <p className="px-3 py-2 text-[11px] italic text-muted-foreground">
+                    Sem dados de entrada. Execute o workflow ou conecte um upstream.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            {/* Resize handle entre Input e Parameters */}
+            <ResizeHandle
+              onDrag={(deltaPx) => {
+                if (!containerRef.current) return;
+                const w = containerRef.current.offsetWidth || 1;
+                setColSplit((s) => {
+                  const next = Math.min(0.6, Math.max(0.1, s.left + deltaPx / w));
+                  return { ...s, left: next };
+                });
+              }}
+            />
+
+            {/* ── Parameters (meio) ──────────────────────────────────────── */}
+            <div
+              className="flex flex-col overflow-hidden"
+              style={{
+                flexBasis: `${(1 - colSplit.left - colSplit.right) * 100}%`,
+                flexGrow: 1,
+                flexShrink: 1,
+                minWidth: 200,
+              }}
+            >
+              <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Parâmetros
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetCols}
+                  className="h-6 gap-1 px-2 text-[11px]"
+                  title="Resetar larguras das colunas (28% / 44% / 28%)"
+                >
+                  <Maximize2 className="size-3" />
+                  Reset
+                </Button>
+              </div>
+              <div
+                className={cn(
+                  "flex-1 overflow-y-auto py-4",
+                  nodeType === "http_request" ? "px-0" : "px-1",
+                )}
+              >
+                {schema.customPanel ? (
+                  <div
+                    className={cn(
+                      schema.dialogSize === "full" && "h-full",
+                      nodeType === "http_request" ? "px-1" : "px-3",
+                    )}
+                  >
+                    <schema.customPanel
+                      values={draft}
+                      nodeId={nodeId}
+                      sampleContext={sampleContext}
+                      onChange={(patch) =>
+                        setDraft((prev) => {
+                          const next = { ...prev };
+                          for (const [k, v] of Object.entries(patch)) {
+                            if (v === undefined) delete next[k];
+                            else next[k] = v;
+                          }
+                          return next;
+                        })
+                      }
+                      onError={setParseError}
+                      meta={
+                        schema.customPanelOwnsMeta && showMeta ? metaDraft : undefined
+                      }
+                      onMetaChange={
+                        schema.customPanelOwnsMeta && showMeta
+                          ? (next) => setMetaDraft(next)
+                          : undefined
+                      }
+                    />
+                  </div>
+                ) : visibleFields.length > 0 ? (
+                  <FieldsList
+                    schema={schema}
+                    values={draft}
+                    errors={allErrors}
+                    onChange={setFieldValue}
+                    onParseError={setParseError}
+                  />
+                ) : null}
+                {nodeType === "webhook_trigger" && workflowId && nodeId && (
+                  <div className="px-3">
+                    <WebhookTriggerExtras workflowId={workflowId as string} nodeId={nodeId as string} />
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Resize handle entre Parameters e Output */}
+            <ResizeHandle
+              onDrag={(deltaPx) => {
+                if (!containerRef.current) return;
+                const w = containerRef.current.offsetWidth || 1;
+                setColSplit((s) => {
+                  const next = Math.min(0.6, Math.max(0.1, s.right - deltaPx / w));
+                  return { ...s, right: next };
+                });
+              }}
+            />
+
+            {/* ── Output (direita) ───────────────────────────────────────── */}
+            <div
+              className="flex flex-col overflow-hidden bg-muted/20"
+              style={{ flexBasis: `${colSplit.right * 100}%`, flexGrow: 0, flexShrink: 0 }}
+            >
+              <div className="flex items-center justify-between border-b border-border bg-muted/40 px-3 py-1.5">
+                <span className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+                  Output
+                  {outputPinned && " (pinado)"}
+                  {outputIsSample && !outputPinned && (
+                    <span className="ml-1.5 rounded bg-sky-500/15 px-1.5 py-0.5 text-[9px] font-medium normal-case tracking-normal text-sky-600 dark:text-sky-400">
+                      exemplo
+                    </span>
+                  )}
+                </span>
+                <div className="flex items-center gap-1">
+                  {onEditOutput && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={onEditOutput}
+                      className="h-6 gap-1 px-2 text-[11px]"
+                      title="Editar JSON — abre editor pra colocar/alterar valores do output. Útil pra forjar respostas e testar downstream sem rodar a tarefa."
+                    >
+                      <Pencil className="size-3" />
+                      Editar
+                    </Button>
+                  )}
+                  {onTogglePin && (
+                    <Button
+                      variant={outputPinned ? "default" : "ghost"}
+                      size="sm"
+                      onClick={onTogglePin}
+                      className={cn(
+                        "h-6 gap-1 px-2 text-[11px]",
+                        outputPinned && "bg-amber-500 text-white hover:bg-amber-600",
+                      )}
+                      title={
+                        outputPinned
+                          ? "Remover pin — node volta a executar normalmente"
+                          : "Pinar output — próximas execuções pulam este nó e usam este JSON"
+                      }
+                    >
+                      {outputPinned ? (
+                        <>
+                          <PinOff className="size-3" />
+                          Despinar
+                        </>
+                      ) : (
+                        <>
+                          <Pin className="size-3" />
+                          Pinar
+                        </>
+                      )}
+                    </Button>
+                  )}
+                </div>
+              </div>
+              <div className="flex-1 overflow-y-auto py-2">
+                {outputIsSample && !outputPinned && (
+                  <div className="mx-3 mb-2 rounded-md border border-sky-500/30 bg-sky-500/5 px-2.5 py-1.5 text-[10px] text-sky-700 dark:text-sky-300">
+                    Exemplo de payload — execute o workflow ou pine pra usar dados reais.
+                    Use os campos abaixo pra montar templates <code className="rounded bg-sky-500/10 px-1">{`{{ prev.body.X }}`}</code>.
+                  </div>
+                )}
+                <JsonTree
+                  data={outputData}
+                  buildExpression={(path) => buildSelfExpression(nodeId, path)}
+                />
+              </div>
+            </div>
+          </div>
+        ) : (
         <div
           className={cn(
             "flex-1 overflow-y-auto py-4",
             nodeType === "http_request" ? "px-0" : "px-1",
           )}
         >
-          {schema.customPanel ? (
-            <div
-              className={cn(
-                schema.dialogSize === "full" && "h-full",
-                nodeType === "http_request" ? "px-1" : "px-3",
-              )}
-            >
-              <schema.customPanel
-                values={draft}
-                nodeId={nodeId}
-                onChange={(patch) =>
-                  setDraft((prev) => {
-                    const next = { ...prev };
-                    for (const [k, v] of Object.entries(patch)) {
-                      if (v === undefined) delete next[k];
-                      else next[k] = v;
-                    }
-                    return next;
-                  })
-                }
-                onError={setParseError}
-                meta={
-                  schema.customPanelOwnsMeta && showMeta ? metaDraft : undefined
-                }
-                onMetaChange={
-                  schema.customPanelOwnsMeta && showMeta
-                    ? (next) => setMetaDraft(next)
-                    : undefined
-                }
-              />
-            </div>
-          ) : visibleFields.length > 0 ? (
-            <FieldsList
-              schema={schema}
-              values={draft}
-              errors={allErrors}
-              onChange={setFieldValue}
-              onParseError={setParseError}
-            />
-          ) : null}
+          <CustomPanelOrFields
+            schema={schema}
+            visibleFieldsLength={visibleFields.length}
+            nodeId={nodeId}
+            nodeType={nodeType}
+            draft={draft}
+            setDraft={setDraft}
+            errors={allErrors}
+            onParseError={setParseError}
+            setFieldValue={setFieldValue}
+            metaDraft={metaDraft}
+            setMetaDraft={setMetaDraft}
+            showMeta={showMeta}
+          />
           {nodeType === "webhook_trigger" && workflowId && nodeId && (
             <div className="px-3">
-              <WebhookTriggerExtras workflowId={workflowId} nodeId={nodeId} />
+              <WebhookTriggerExtras workflowId={workflowId as string} nodeId={nodeId as string} />
             </div>
           )}
         </div>
+        )}
 
         <DialogFooter className="flex-col gap-2 sm:flex-row sm:items-center sm:justify-end">
           {hasErrors && (
@@ -605,4 +860,191 @@ function FieldsList({
       })}
     </div>
   );
+}
+
+/**
+ * Cada upstream vira um bloco colapsável com `label` + JsonTree.
+ * Drag de uma folha gera `{{ steps.<upstream.nodeId>.path }}` — formato
+ * que o `template.ts` (back) resolve em runtime.
+ */
+function UpstreamSection({ upstream }: { upstream: UpstreamInput }) {
+  // Colapsado por padrão — quando há vários upstreams (cadeia longa),
+  // abrir todos cria parede de JSON e atrapalha. User clica pra expandir.
+  const [open, setOpen] = useState(false);
+
+  const buildExpression = useCallback(
+    (path: Array<string | number>): string => {
+      const pathStr = path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
+      const isTriggerLike =
+        upstream.nodeId === "" ||
+        /^(start|trigger|manual|webhook)/i.test(upstream.nodeId);
+      const root = isTriggerLike ? "input" : `steps.${upstream.nodeId}`;
+      return `{{ ${pathStr ? `${root}.${pathStr}` : root} }}`;
+    },
+    [upstream.nodeId],
+  );
+
+  // Conta de chaves no top-level pra mostrar preview no header colapsado.
+  const topLevelCount =
+    upstream.output && typeof upstream.output === "object"
+      ? Array.isArray(upstream.output)
+        ? upstream.output.length
+        : Object.keys(upstream.output).length
+      : 0;
+
+  return (
+    <div className="border-b border-border/60 last:border-b-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-1.5 px-3 py-1.5 text-left text-[11px] font-medium text-foreground/80 hover:bg-muted/60"
+      >
+        {open ? (
+          <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+        )}
+        {upstream.pinned && (
+          <Pin className="size-3 text-amber-500" aria-label="Pinado" />
+        )}
+        <span className="truncate">{upstream.label}</span>
+        <span className="ml-auto text-[10px] text-muted-foreground">
+          {Array.isArray(upstream.output) ? `[${topLevelCount}]` : `{${topLevelCount}}`}
+        </span>
+      </button>
+      {open && <JsonTree data={upstream.output} buildExpression={buildExpression} />}
+    </div>
+  );
+}
+
+/**
+ * Handle vertical de resize — barra fina draggable entre 2 colunas.
+ * Usa pointer events pra cobrir mouse + touch + caneta. O caller recebe
+ * `deltaPx` (delta acumulado em px) a cada movimento.
+ */
+function ResizeHandle({ onDrag }: { onDrag: (deltaPx: number) => void }) {
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      onPointerDown={(e) => {
+        e.preventDefault();
+        const startX = e.clientX;
+        const target = e.currentTarget;
+        target.setPointerCapture(e.pointerId);
+        let lastX = startX;
+        const onMove = (ev: PointerEvent) => {
+          const delta = ev.clientX - lastX;
+          lastX = ev.clientX;
+          if (delta !== 0) onDrag(delta);
+        };
+        const onUp = (ev: PointerEvent) => {
+          target.releasePointerCapture(ev.pointerId);
+          target.removeEventListener("pointermove", onMove);
+          target.removeEventListener("pointerup", onUp);
+        };
+        target.addEventListener("pointermove", onMove);
+        target.addEventListener("pointerup", onUp);
+      }}
+      className="group relative w-1 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary/60 active:bg-primary"
+    >
+      {/* área de clique expandida + ícone visual no hover */}
+      <div className="absolute inset-y-0 -left-1.5 -right-1.5" />
+      <span className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+        <GripVertical className="size-4 text-primary" />
+      </span>
+    </div>
+  );
+}
+
+/** Helper exposto pro Output (coluna direita) — usa o próprio nó. */
+function buildSelfExpression(
+  nodeId: string | undefined,
+  path: Array<string | number>,
+): string {
+  const pathStr = path.map((p) => (typeof p === "number" ? `[${p}]` : p)).join(".");
+  const root = nodeId ? `steps.${nodeId}` : "output";
+  return `{{ ${pathStr ? `${root}.${pathStr}` : root} }}`;
+}
+
+/* -------------------------------------------------------------------------- */
+/* CustomPanelOrFields — extraído pra TS estreitar `schema` corretamente.    */
+/*                                                                            */
+/* Encapsular nesse component permite que o type-narrowing aconteça nos       */
+/* parâmetros (não-nulos por contrato) em vez de tentar inline no JSX.        */
+/* -------------------------------------------------------------------------- */
+function CustomPanelOrFields(props: {
+  schema: NodeConfigSchema | null;
+  visibleFieldsLength: number;
+  nodeId: string | undefined;
+  nodeType: string | undefined;
+  draft: Record<string, unknown>;
+  setDraft: React.Dispatch<React.SetStateAction<Record<string, unknown>>>;
+  errors: Record<string, string>;
+  onParseError: (k: string, msg: string | null) => void;
+  setFieldValue: (k: string, v: unknown) => void;
+  metaDraft: NodeMeta;
+  setMetaDraft: React.Dispatch<React.SetStateAction<NodeMeta>>;
+  showMeta: boolean;
+}) {
+  const {
+    schema,
+    visibleFieldsLength,
+    nodeId,
+    nodeType,
+    draft,
+    setDraft,
+    errors,
+    onParseError,
+    setFieldValue,
+    metaDraft,
+    setMetaDraft,
+    showMeta,
+  } = props;
+  if (!schema) return null;
+  const CustomPanel = schema.customPanel;
+  if (CustomPanel) {
+    return (
+      <div
+        className={cn(
+          schema.dialogSize === "full" && "h-full",
+          nodeType === "http_request" ? "px-1" : "px-3",
+        )}
+      >
+        <CustomPanel
+          values={draft}
+          nodeId={nodeId}
+          onChange={(patch) =>
+            setDraft((prev) => {
+              const next = { ...prev };
+              for (const [k, v] of Object.entries(patch)) {
+                if (v === undefined) delete next[k];
+                else next[k] = v;
+              }
+              return next;
+            })
+          }
+          onError={onParseError}
+          meta={schema.customPanelOwnsMeta && showMeta ? metaDraft : undefined}
+          onMetaChange={
+            schema.customPanelOwnsMeta && showMeta
+              ? (next) => setMetaDraft(next)
+              : undefined
+          }
+        />
+      </div>
+    );
+  }
+  if (visibleFieldsLength > 0) {
+    return (
+      <FieldsList
+        schema={schema}
+        values={draft}
+        errors={errors}
+        onChange={setFieldValue}
+        onParseError={onParseError}
+      />
+    );
+  }
+  return null;
 }

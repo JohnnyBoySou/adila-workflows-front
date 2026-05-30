@@ -154,7 +154,11 @@ function TriggerActiveTabbed({
   onChanged: () => void;
 }) {
   const [section, setSection] = useState<SectionKey>("config");
-  const url = trigger.webhookToken ? triggersApi.webhookUrl(trigger.webhookToken) : null;
+  // URL padrão = token. Se o usuário setou um path personalizado, mostra ele
+  // como URL primária (mais amigável) e mantém o token como fallback técnico.
+  const tokenUrl = trigger.webhookToken ? triggersApi.webhookUrl(trigger.webhookToken) : null;
+  const pathUrl = trigger.webhookPath ? triggersApi.webhookUrl(trigger.webhookPath) : null;
+  const url = pathUrl ?? tokenUrl;
 
   return (
     <Sections
@@ -225,7 +229,35 @@ function ConfigTab({
   onChanged: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const [pathDraft, setPathDraft] = useState(trigger.webhookPath ?? "");
+  const [pathError, setPathError] = useState<string | null>(null);
   const allowed = trigger.allowedMethods ?? ["POST"];
+
+  const pathMutation = useMutation({
+    mutationFn: (next: string | null) =>
+      triggersApi.update(workflowId, trigger.id, { webhookPath: next }),
+    onSuccess: () => {
+      setPathError(null);
+      onChanged();
+    },
+    onError: (err: Error) => {
+      setPathError(err.message || "Path inválido ou já em uso");
+    },
+  });
+
+  function savePath() {
+    const trimmed = pathDraft.trim();
+    if (trimmed === (trigger.webhookPath ?? "")) return;
+    if (trimmed === "") {
+      pathMutation.mutate(null);
+      return;
+    }
+    if (!/^[a-z0-9_-]{2,64}$/.test(trimmed)) {
+      setPathError("Use 2-64 chars: letras minúsculas, números, '-' ou '_'");
+      return;
+    }
+    pathMutation.mutate(trimmed);
+  }
 
   const toggleMutation = useMutation({
     mutationFn: () => triggersApi.update(workflowId, trigger.id, { enabled: !trigger.enabled }),
@@ -291,8 +323,56 @@ function ConfigTab({
                 : <Copy className="size-3.5" />}
             </button>
           </div>
+          {trigger.webhookToken && trigger.webhookPath && (
+            <p className="text-[10px] text-muted-foreground">
+              Alias ativo — a URL antiga com token (<code className="rounded bg-muted px-1">{trigger.webhookToken.slice(0, 12)}…</code>) ainda responde.
+            </p>
+          )}
         </div>
       )}
+
+      {/* Path personalizado */}
+      <div className="space-y-1.5">
+        <p className="text-xs font-semibold text-foreground">Path personalizado (opcional)</p>
+        <p className="text-[10px] text-muted-foreground">
+          Substitui o token na URL por um alias amigável. Ex.: <code className="rounded bg-muted px-1">clinicare1</code> → <code className="rounded bg-muted px-1">/hooks/clinicare1</code>. Slug minúsculo, único globalmente.
+        </p>
+        <div className="flex items-center gap-2">
+          <div className="flex flex-1 items-center gap-1 rounded-md border border-border bg-background px-2 py-1">
+            <span className="font-mono text-[11px] text-muted-foreground">/hooks/</span>
+            <input
+              type="text"
+              value={pathDraft}
+              onChange={(e) => {
+                setPathDraft(e.target.value.toLowerCase());
+                if (pathError) setPathError(null);
+              }}
+              onBlur={savePath}
+              onKeyDown={(e) => e.key === "Enter" && savePath()}
+              placeholder="meu-webhook"
+              spellCheck={false}
+              autoCapitalize="off"
+              className="flex-1 bg-transparent font-mono text-[11px] outline-none placeholder:text-muted-foreground/60"
+            />
+            {pathMutation.isPending && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+          </div>
+          {trigger.webhookPath && (
+            <Button
+              size="sm"
+              variant="ghost"
+              onClick={() => {
+                setPathDraft("");
+                pathMutation.mutate(null);
+              }}
+              disabled={pathMutation.isPending}
+              className="h-7 px-2 text-[11px] text-muted-foreground hover:text-destructive"
+            >
+              Limpar
+            </Button>
+          )}
+        </div>
+        {pathError && <p className="text-[10px] text-destructive">{pathError}</p>}
+      </div>
 
       {/* Métodos HTTP */}
       <div className="space-y-2">

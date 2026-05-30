@@ -12,6 +12,7 @@
  * borramos a visualização por default na seção de Teste.
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, Copy, Eye, EyeOff, History, KeyRound, Loader2, Send, Shield } from "lucide-react";
 
@@ -68,8 +69,8 @@ export function CryptoPanel({ values, onChange, onError, nodeId }: CustomPanelPr
   const valueMissing = (op === "hash" || op === "hmac" || op === "base64") && !readString(values.value);
   const secretMissing = op === "hmac" && !readString(values.secret);
 
-  onError?.("value", valueMissing ? "Valor obrigatório." : null);
-  onError?.("secret", secretMissing ? "Secret obrigatório." : null);
+  useFieldError(onError, "value", valueMissing ? "Valor obrigatório." : null);
+  useFieldError(onError, "secret", secretMissing ? "Secret obrigatório." : null);
 
   return (
     <Sections

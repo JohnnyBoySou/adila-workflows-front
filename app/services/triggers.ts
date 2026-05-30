@@ -26,6 +26,8 @@ export type Trigger = {
   timezone: string | null;
 
   webhookToken: string | null;
+  /** Path personalizado opcional — quando setado, /hooks/<webhookPath> também responde. */
+  webhookPath: string | null;
   webhookResponseMode: WebhookResponseMode | null;
   webhookResponseTimeoutMs: number | null;
   /** Métodos HTTP aceitos no /hooks/:token. Default ['POST']. */
@@ -102,6 +104,9 @@ export type UpdateTriggerInput = {
   allowedMethods?: WebhookMethod[];
   hmacSecret?: string | null;
   inputSchema?: WebhookInputSchema | null;
+  /** Alias amigável da URL. Slug [a-z0-9_-]{2,64}, ou null pra remover. */
+  webhookPath?: string | null;
+  workflowVersionId?: string | null;
 };
 
 export type WebhookInvocation = {

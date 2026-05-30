@@ -9,7 +9,7 @@
  *   single: { name: string, value: any }
  *   multi:  { variables: Record<string, any> }
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { History, Layers, Loader2, Send, Variable } from "lucide-react";
 
@@ -18,6 +18,13 @@ import { Input } from "~/components/ui/input";
 import { Label } from "~/components/ui/label";
 import { Sections, type SectionItem } from "~/components/ui/sections";
 import { Textarea } from "~/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "~/components/ui/select";
 import { cn } from "~/lib/utils";
 import { queryKeys } from "~/lib/query-keys";
 import * as nodesApi from "~/services/workflow-nodes";
@@ -59,8 +66,14 @@ export function SetVariablePanel({ values, onChange, onError, nodeId }: CustomPa
       !values.variables ||
       Object.keys(values.variables as Record<string, unknown>).length === 0);
 
-  onError?.("name", nameMissing ? "Informe o nome." : null);
-  onError?.("variables", variablesEmpty ? "Adicione ao menos 1 variável." : null);
+  // CRÍTICO: onError direto no render dispara setState no parent → re-render →
+  // onError de novo → loop infinito (Chrome trava). Tem que ser em useEffect.
+  useEffect(() => {
+    onError?.("name", nameMissing ? "Informe o nome." : null);
+  }, [nameMissing, onError]);
+  useEffect(() => {
+    onError?.("variables", variablesEmpty ? "Adicione ao menos 1 variável." : null);
+  }, [variablesEmpty, onError]);
 
   return (
     <Sections
@@ -178,7 +191,13 @@ function ModeSection({
       ) : (
         <MultiEditor
           variables={(values.variables as Record<string, unknown>) ?? {}}
-          onChange={(v) => onChange({ variables: v })}
+          types={(values._types as Record<string, VarType>) ?? {}}
+          onChange={(next) =>
+            onChange({
+              variables: next.variables,
+              _types: Object.keys(next.types).length > 0 ? next.types : undefined,
+            })
+          }
           empty={variablesEmpty}
         />
       )}
@@ -192,21 +211,36 @@ function ModeSection({
   );
 }
 
+type VarType = "string" | "number" | "boolean" | "array" | "object";
+const VAR_TYPES: VarType[] = ["string", "number", "boolean", "array", "object"];
+const TYPE_LABELS: Record<VarType, string> = {
+  string: "Texto",
+  number: "Número",
+  boolean: "Bool",
+  array: "Array",
+  object: "Objeto",
+};
+
 function MultiEditor({
   variables,
+  types,
   onChange,
   empty,
 }: {
   variables: Record<string, unknown>;
-  onChange: (v: Record<string, unknown>) => void;
+  types: Record<string, VarType>;
+  onChange: (next: { variables: Record<string, unknown>; types: Record<string, VarType> }) => void;
   empty: boolean;
 }) {
   const entries = Object.entries(variables);
 
   function setKey(oldKey: string, newKey: string) {
-    const next: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(variables)) next[k === oldKey ? newKey : k] = v;
-    onChange(next);
+    if (oldKey === newKey) return;
+    const nextVars: Record<string, unknown> = {};
+    const nextTypes: Record<string, VarType> = {};
+    for (const [k, v] of Object.entries(variables)) nextVars[k === oldKey ? newKey : k] = v;
+    for (const [k, t] of Object.entries(types)) nextTypes[k === oldKey ? newKey : k] = t;
+    onChange({ variables: nextVars, types: nextTypes });
   }
   function setValue(key: string, raw: string) {
     let parsed: unknown = raw;
@@ -215,12 +249,17 @@ function MultiEditor({
     } catch {
       parsed = raw;
     }
-    onChange({ ...variables, [key]: parsed });
+    onChange({ variables: { ...variables, [key]: parsed }, types });
+  }
+  function setType(key: string, t: VarType) {
+    onChange({ variables, types: { ...types, [key]: t } });
   }
   function remove(key: string) {
-    const next = { ...variables };
-    delete next[key];
-    onChange(next);
+    const nextVars = { ...variables };
+    const nextTypes = { ...types };
+    delete nextVars[key];
+    delete nextTypes[key];
+    onChange({ variables: nextVars, types: nextTypes });
   }
   function add() {
     let i = 1;
@@ -229,42 +268,80 @@ function MultiEditor({
       i++;
       k = `newVar${i}`;
     }
-    onChange({ ...variables, [k]: "" });
+    onChange({
+      variables: { ...variables, [k]: "" },
+      types: { ...types, [k]: "string" },
+    });
   }
 
   return (
     <div className="space-y-2">
-      <Label className="text-[11px] font-medium">Variáveis {empty && <span className="text-destructive">(adicione ao menos 1)</span>}</Label>
+      <Label className="text-[11px] font-medium">
+        Variáveis {empty && <span className="text-destructive">(adicione ao menos 1)</span>}
+      </Label>
       {entries.length === 0 ? (
         <EmptyHint>Use o botão abaixo pra criar a primeira.</EmptyHint>
       ) : (
         <div className="space-y-1.5">
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex items-start gap-1.5">
-              <Input
-                value={k}
-                onChange={(e) => setKey(k, e.target.value)}
-                className="h-7 max-w-[160px] font-mono text-xs"
-                placeholder="nome"
-              />
-              <span className="pt-1.5 text-muted-foreground">=</span>
-              <Textarea
-                rows={1}
-                value={typeof v === "string" ? v : JSON.stringify(v)}
-                onChange={(e) => setValue(k, e.target.value)}
-                className="min-h-[28px] flex-1 resize-y font-mono text-xs"
-                placeholder="{{steps.fetch.body.total}}"
-              />
-              <Button size="sm" variant="ghost" onClick={() => remove(k)} className="h-7 px-2 text-[11px]">
-                ×
-              </Button>
-            </div>
-          ))}
+          {entries.map(([k, v]) => {
+            const t = types[k] ?? "string";
+            return (
+              <div key={k} className="flex items-start gap-1.5">
+                <Input
+                  value={k}
+                  onChange={(e) => setKey(k, e.target.value)}
+                  className="h-7 max-w-[140px] font-mono text-xs"
+                  placeholder="nome"
+                />
+                <Select value={t} onValueChange={(v) => setType(k, v as VarType)}>
+                  <SelectTrigger className="h-7 w-[90px] text-[11px]">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {VAR_TYPES.map((vt) => (
+                      <SelectItem key={vt} value={vt} className="text-xs">
+                        {TYPE_LABELS[vt]}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <span className="pt-1.5 text-muted-foreground">=</span>
+                <Textarea
+                  rows={1}
+                  value={typeof v === "string" ? v : JSON.stringify(v)}
+                  onChange={(e) => setValue(k, e.target.value)}
+                  className="min-h-[28px] flex-1 resize-y font-mono text-xs"
+                  placeholder={
+                    t === "number"
+                      ? "42 ou {{ steps.x.count }}"
+                      : t === "boolean"
+                        ? "true / false / {{ ... }}"
+                        : t === "array"
+                          ? '[1, 2, 3]'
+                          : t === "object"
+                            ? '{"key": "val"}'
+                            : "texto ou {{ ... }}"
+                  }
+                />
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => remove(k)}
+                  className="h-7 px-2 text-[11px]"
+                >
+                  ×
+                </Button>
+              </div>
+            );
+          })}
         </div>
       )}
       <Button size="sm" variant="outline" onClick={add} className="h-7 text-[11px]">
         + adicionar variável
       </Button>
+      <p className="text-[10px] text-muted-foreground">
+        O <strong>tipo</strong> coage o valor após resolver template (`{`{{ … }}`}` → string vira number, etc.) — útil quando o downstream <code>if</code> compara <code>=== true</code>.
+      </p>
     </div>
   );
 }

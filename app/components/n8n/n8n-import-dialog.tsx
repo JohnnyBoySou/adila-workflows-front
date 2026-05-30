@@ -41,9 +41,20 @@ type Props = {
   folderId: string | null;
   /** Notifica o pai pra navegar/abrir o editor depois do summary. */
   onImported?: (workflow: Workflow) => void;
+  /**
+   * Texto JSON inicial — útil pra integração com paste global (Ctrl+V no dashboard
+   * abre o dialog já preenchido). Aplicado uma vez quando o dialog abre.
+   */
+  initialText?: string;
 };
 
-export function N8nImportDialog({ open, onOpenChange, folderId, onImported }: Props) {
+export function N8nImportDialog({
+  open,
+  onOpenChange,
+  folderId,
+  onImported,
+  initialText,
+}: Props) {
   const nameInputId = useId();
   const queryClient = useQueryClient();
 
@@ -56,6 +67,27 @@ export function N8nImportDialog({ open, onOpenChange, folderId, onImported }: Pr
   const [result, setResult] = useState<{ workflow: Workflow; summary: N8nImportSummary } | null>(
     null,
   );
+
+  // Quando o pai abre com initialText (paste global), preenche o textarea
+  // e tenta sugerir o nome a partir do JSON.
+  const lastSeededRef = useRef<string | null>(null);
+  if (open && initialText && lastSeededRef.current !== initialText) {
+    lastSeededRef.current = initialText;
+    // Adia o setState pro próximo tick pra não disparar warning de render
+    queueMicrotask(() => {
+      setText(initialText);
+      setParseError(null);
+      // Tenta extrair `name` do JSON pra preencher o campo opcional.
+      try {
+        const parsed = JSON.parse(initialText) as { name?: unknown };
+        if (typeof parsed.name === "string" && parsed.name.trim()) {
+          setName(parsed.name);
+        }
+      } catch {
+        /* JSON inválido — usuário corrige na textarea */
+      }
+    });
+  }
 
   const mutation = useMutation({
     mutationFn: (input: workflowsApi.ImportFromN8nInput) => workflowsApi.importFromN8n(input),
@@ -72,6 +104,7 @@ export function N8nImportDialog({ open, onOpenChange, folderId, onImported }: Pr
     setParseError(null);
     setFileName(null);
     setResult(null);
+    lastSeededRef.current = null;
     mutation.reset();
     if (fileInputRef.current) fileInputRef.current.value = "";
   }

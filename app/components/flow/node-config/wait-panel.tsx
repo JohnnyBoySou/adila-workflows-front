@@ -9,6 +9,7 @@
  *   ms?: number  | seconds?: number | until?: string ISO  — exatamente um
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarClock, Clock, History, Loader2, Send, Timer } from "lucide-react";
 
@@ -70,7 +71,7 @@ export function WaitPanel({ values, onChange, onError, nodeId }: CustomPanelProp
   const until = readString(values.until);
 
   const noneSet = ms === undefined && seconds === undefined && until === "";
-  onError?.("wait", noneSet ? "Informe ms, seconds ou until." : null);
+  useFieldError(onError, "wait", noneSet ? "Informe ms, seconds ou until." : null);
 
   return (
     <Sections

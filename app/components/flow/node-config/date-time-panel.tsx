@@ -8,6 +8,7 @@
  * Persiste em `values`: { operation, value?, format?, amount?, unit?, from?, to? }
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { CalendarClock, Eye, History, Loader2, Send } from "lucide-react";
 
@@ -70,9 +71,9 @@ export function DateTimePanel({ values, onChange, onError, nodeId }: CustomPanel
   const amountMissing = op === "add" && typeof values.amount !== "number";
   const diffMissing = op === "diff" && (!readString(values.from) || !readString(values.to));
 
-  onError?.("value", valueMissing ? "Valor obrigatório." : null);
-  onError?.("amount", amountMissing ? "Amount obrigatório." : null);
-  onError?.("from", diffMissing ? "from/to obrigatórios." : null);
+  useFieldError(onError, "value", valueMissing ? "Valor obrigatório." : null);
+  useFieldError(onError, "amount", amountMissing ? "Amount obrigatório." : null);
+  useFieldError(onError, "from", diffMissing ? "from/to obrigatórios." : null);
 
   return (
     <Sections

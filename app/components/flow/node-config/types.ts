@@ -77,6 +77,17 @@ export interface CustomPanelProps {
    */
   meta?: NodeMetaPatch;
   onMetaChange?: (next: NodeMetaPatch) => void;
+  /**
+   * Contexto de exemplo pra preview ao vivo — montado a partir dos outputs
+   * dos upstream nodes (run focado ou pinned data). Quando ausente, painéis
+   * caem no DEFAULT_SAMPLE_CONTEXT (template engine).
+   */
+  sampleContext?: {
+    input?: Record<string, unknown>;
+    vars?: Record<string, unknown>;
+    env?: Record<string, string>;
+    steps?: Record<string, Record<string, unknown>>;
+  };
 }
 
 export interface NodeConfigSchema {

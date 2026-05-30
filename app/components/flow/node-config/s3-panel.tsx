@@ -15,6 +15,7 @@
  * Credenciais nunca vão pra config — sempre via env vars do environment.
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
@@ -96,9 +97,8 @@ export function S3Panel({ values, onChange, onError, nodeId }: CustomPanelProps)
     onChange(patch);
   }
 
-  // Reporta validação no ciclo render — onError tolera chamadas síncronas.
-  onError?.("key", keyMissing ? "Informe a key." : null);
-  onError?.("value", valueMissing ? "Informe o conteúdo (value)." : null);
+  useFieldError(onError, "key", keyMissing ? "Informe a key." : null);
+  useFieldError(onError, "value", valueMissing ? "Informe o conteúdo (value)." : null);
 
   return (
     <Sections sections={SECTIONS as unknown as SectionItem<SectionId>[]} value={section} onValueChange={setSection} ariaLabel="Seções do nó S3">

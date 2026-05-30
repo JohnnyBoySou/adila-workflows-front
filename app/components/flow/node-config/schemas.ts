@@ -26,6 +26,7 @@ import { AggregatePanel } from "./aggregate-panel";
 import { DateTimePanel } from "./date-time-panel";
 import { ItemListsPanel } from "./item-lists-panel";
 import { CryptoPanel } from "./crypto-panel";
+import { ScheduleTriggerPanel } from "./schedule-trigger-panel";
 
 // ── Gatilhos / Saída ─────────────────────────────────────────────────────
 const start: NodeConfigSchema = {
@@ -323,6 +324,56 @@ const execute_workflow: NodeConfigSchema = {
 };
 
 // ── Dados ────────────────────────────────────────────────────────────────
+// ── Edit Fields (n8n "Edit Fields / Set") ────────────────────────────────
+// Organiza dados que chegam do upstream — útil pra pegar webhook e isolar
+// campos antes de passar adiante. Schema: data + set (kv) + remove (lista) +
+// keep_only + keep (lista). Renderer genérico (FieldsList) — cada campo é
+// editável e aceita templates `{{ prev.X }}` ou `{{ steps.<id>.X }}`.
+const edit_fields: NodeConfigSchema = {
+  title: "Edit Fields",
+  description:
+    "Adiciona, sobrescreve ou remove campos do payload. Útil pra normalizar dados que chegam de um webhook antes de mandar pros próximos nodes. Aceita templates contra `prev`, `input`, `vars`, `steps`.",
+  fields: [
+    {
+      name: "data",
+      label: "Dados de entrada",
+      type: "json",
+      description:
+        "Objeto OU array de items que será modificado. Use template — geralmente `{{ prev }}` (output do nó anterior) ou `{{ input.body }}` (corpo do webhook).",
+      placeholder: '"{{ prev }}" ou {"body": {...}}',
+      required: true,
+    },
+    {
+      name: "set",
+      label: "Campos a setar / sobrescrever",
+      type: "kv",
+      description:
+        "Mapa chave→valor. Valores aceitam templates. Ex: `lead_id` → `{{ input.body.lead.id }}`",
+    },
+    {
+      name: "remove",
+      label: "Campos a remover",
+      type: "stringList",
+      description: "Lista de chaves do payload que devem ser removidas.",
+    },
+    {
+      name: "keep_only",
+      label: "Manter apenas campos da lista abaixo",
+      type: "boolean",
+      description:
+        "Quando ligado, descarta TUDO do data exceto chaves listadas em `keep` (e campos novos do `set`).",
+    },
+    {
+      name: "keep",
+      label: "Campos a manter (quando keep_only ativo)",
+      type: "stringList",
+      description: "Lista de chaves whitelistadas. Ignorado se `keep_only` desligado.",
+      visibleWhen: (v) => Boolean(v.keep_only),
+    },
+  ],
+  dialogSize: "wide",
+};
+
 const set_variable: NodeConfigSchema = {
   title: "Variável",
   dialogSize: "wide",
@@ -485,6 +536,29 @@ const container: NodeConfigSchema = {
   ],
 };
 
+// ── Schedule / Interval triggers ──────────────────────────────────────────
+const schedule_trigger: NodeConfigSchema = {
+  title: "Cron Trigger",
+  description:
+    "Dispara o workflow em horários programados. Seleciona intervalo (segundos/minutos/horas/dias/semanas) ou cron expression direto.",
+  fields: [],
+  customPanel: ScheduleTriggerPanel,
+  dialogSize: "wide",
+};
+
+const interval_trigger: NodeConfigSchema = {
+  title: "Interval Trigger",
+  description: "Dispara a cada N segundos (legado — prefira Schedule Trigger).",
+  fields: [
+    {
+      name: "intervalSeconds",
+      label: "Intervalo (segundos)",
+      type: "number",
+      placeholder: "60",
+    },
+  ],
+};
+
 // ── Registry ─────────────────────────────────────────────────────────────
 export const NODE_CONFIG_SCHEMAS: Record<string, NodeConfigSchema> = {
   start,
@@ -518,6 +592,9 @@ export const NODE_CONFIG_SCHEMAS: Record<string, NodeConfigSchema> = {
   s3,
   sticky_note,
   container,
+  schedule_trigger,
+  interval_trigger,
+  edit_fields,
 };
 
 export function getNodeConfigSchema(nodeType: string | undefined): NodeConfigSchema | null {

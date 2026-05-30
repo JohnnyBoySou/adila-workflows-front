@@ -147,7 +147,7 @@ export function subscribeToRunEvents(
     es.close();
   };
 
-  const parse = <T extends RunStreamEvent>(raw: MessageEvent): T | null => {
+  const parse = <T>(raw: MessageEvent): T | null => {
     try {
       return JSON.parse(raw.data) as T;
     } catch {
@@ -164,6 +164,7 @@ export function subscribeToRunEvents(
     }
   };
 
+  // ─── snapshot inicial mantém o nome `snapshot` ─────────────────────────
   es.addEventListener("snapshot", (e) => {
     const evt = parse<SnapshotEvent>(e as MessageEvent);
     if (!evt) return;
@@ -171,51 +172,118 @@ export function subscribeToRunEvents(
     dispatch(evt);
   });
 
-  es.addEventListener("run-start", (e) => {
-    const evt = parse<RunLifecycleEvent>(e as MessageEvent);
-    if (!evt) return;
+  // ─── Adaptador: o back emite event names `workflow.started`/`node.started`/
+  //     `node.finished`/`workflow.finished` com payload `{data: {...}, status}`.
+  //     Aqui traduzimos pros nomes lógicos `onRunStart`/`onStepStart`/...
+  //     pra não vazar o shape do back nas dezenas de callsites.
+  type BackendPayload = {
+    type: string;
+    runId: string;
+    at: string;
+    seq?: number;
+    data?: {
+      index?: number;
+      nodeId?: string;
+      nodeType?: string;
+      status?: "running" | "success" | "failed";
+      output?: Record<string, unknown> | null;
+      error?: Record<string, unknown> | null;
+      durationMs?: number | null;
+      [k: string]: unknown;
+    };
+  };
+
+  function toStepEvent(
+    raw: BackendPayload,
+    type: "step-start" | "step-success" | "step-failed",
+  ): StepEvent | null {
+    const d = raw.data ?? {};
+    if (typeof d.nodeId !== "string" || typeof d.nodeType !== "string") return null;
+    return {
+      type,
+      runId: raw.runId,
+      at: raw.at,
+      step: {
+        index: typeof d.index === "number" ? d.index : 0,
+        nodeId: d.nodeId,
+        nodeType: d.nodeType,
+        status:
+          type === "step-start" ? "running" : type === "step-success" ? "success" : "failed",
+        output: d.output ?? null,
+        error: d.error ?? null,
+        durationMs: d.durationMs ?? null,
+      },
+    };
+  }
+
+  function toLifecycleEvent(
+    raw: BackendPayload,
+    type: RunLifecycleEvent["type"],
+  ): RunLifecycleEvent {
+    return { type, runId: raw.runId, at: raw.at, data: raw.data };
+  }
+
+  es.addEventListener("workflow.started", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toLifecycleEvent(raw, "run-start");
     handlers.onRunStart?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("step-start", (e) => {
-    const evt = parse<StepEvent>(e as MessageEvent);
+  es.addEventListener("node.started", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toStepEvent(raw, "step-start");
     if (!evt) return;
     handlers.onStepStart?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("step-success", (e) => {
-    const evt = parse<StepEvent>(e as MessageEvent);
+  // node.finished traz status=success|failed no payload — split aqui.
+  es.addEventListener("node.finished", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const status = raw.data?.status;
+    const type: "step-success" | "step-failed" =
+      status === "failed" ? "step-failed" : "step-success";
+    const evt = toStepEvent(raw, type);
     if (!evt) return;
-    handlers.onStepSuccess?.(evt);
+    if (type === "step-success") handlers.onStepSuccess?.(evt);
+    else handlers.onStepFailed?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("step-failed", (e) => {
-    const evt = parse<StepEvent>(e as MessageEvent);
+  // node.failed é emitido em alguns paths — trata como step-failed.
+  es.addEventListener("node.failed", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toStepEvent(raw, "step-failed");
     if (!evt) return;
     handlers.onStepFailed?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("run-success", (e) => {
-    const evt = parse<RunLifecycleEvent>(e as MessageEvent);
-    if (!evt) return;
+  es.addEventListener("workflow.finished", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toLifecycleEvent(raw, "run-success");
     handlers.onRunSuccess?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("run-failed", (e) => {
-    const evt = parse<RunLifecycleEvent>(e as MessageEvent);
-    if (!evt) return;
+  es.addEventListener("workflow.failed", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toLifecycleEvent(raw, "run-failed");
     handlers.onRunFailed?.(evt);
     dispatch(evt);
   });
 
-  es.addEventListener("run-cancelled", (e) => {
-    const evt = parse<RunLifecycleEvent>(e as MessageEvent);
-    if (!evt) return;
+  es.addEventListener("workflow.cancelled", (e) => {
+    const raw = parse<BackendPayload>(e as MessageEvent);
+    if (!raw) return;
+    const evt = toLifecycleEvent(raw, "run-cancelled");
     handlers.onRunCancelled?.(evt);
     dispatch(evt);
   });

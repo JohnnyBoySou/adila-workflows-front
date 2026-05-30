@@ -9,6 +9,7 @@
  * Só faz efeito quando o trigger está em `responseMode: "sync"`.
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Eye, History, Loader2, Send } from "lucide-react";
 
@@ -54,7 +55,7 @@ export function RespondToWebhookPanel({ values, onChange, onError, nodeId }: Cus
 
   const statusValid =
     typeof values.status !== "number" || (values.status >= 100 && values.status < 600);
-  onError?.("status", statusValid ? null : "Status fora de 100–599.");
+  useFieldError(onError, "status", statusValid ? null : "Status fora de 100–599.");
 
   return (
     <Sections

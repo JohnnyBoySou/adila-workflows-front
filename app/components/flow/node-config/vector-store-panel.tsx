@@ -22,6 +22,7 @@
  *     filter?: Record<string, unknown>
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Database,
@@ -92,8 +93,8 @@ export function VectorStorePanel({ values, onChange, onError, nodeId }: CustomPa
   const connMissing = connectionString.trim() === "";
   const contentMissing = op === "insert" && content.trim() === "";
 
-  onError?.("connectionString", connMissing ? "Informe a connection string." : null);
-  onError?.("content", contentMissing ? "Informe o conteúdo." : null);
+  useFieldError(onError, "connectionString", connMissing ? "Informe a connection string." : null);
+  useFieldError(onError, "content", contentMissing ? "Informe o conteúdo." : null);
 
   function set(patch: Record<string, unknown>) {
     onChange(patch);

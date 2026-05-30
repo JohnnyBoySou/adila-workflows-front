@@ -12,6 +12,7 @@
  * o usuário pode digitar `{{ steps.X.rows }}` ou colar um literal JSON.
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Calculator, History, Loader2, Send } from "lucide-react";
 
@@ -61,9 +62,9 @@ export function AggregatePanel({ values, onChange, onError, nodeId }: CustomPane
     OPS.find((o) => o.value === op)?.needsField && !readString(values.field);
   const byMissing = op === "group_by" && !readString(values.by);
 
-  onError?.("items", itemsMissing ? "Informe a coleção." : null);
-  onError?.("field", fieldMissing ? "Field obrigatório." : null);
-  onError?.("by", byMissing ? "by obrigatório." : null);
+  useFieldError(onError, "items", itemsMissing ? "Informe a coleção." : null);
+  useFieldError(onError, "field", fieldMissing ? "Field obrigatório." : null);
+  useFieldError(onError, "by", byMissing ? "by obrigatório." : null);
 
   return (
     <Sections

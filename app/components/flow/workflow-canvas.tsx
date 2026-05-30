@@ -26,9 +26,23 @@ import {
   type OnNodeDrag,
 } from "@xyflow/react";
 
-import WorkflowNodeComponent from "./workflow-node";
+import WorkflowNodeComponent, {
+  WORKFLOW_NODE_ADD_NEXT_EVENT,
+  type WorkflowNodeAddNextDetail,
+} from "./workflow-node";
+import { WorkflowEdge } from "./workflow-edge";
 import StickyNoteNodeComponent, { type StickyNoteNode } from "./sticky-note-node";
 import ContainerNodeComponent, { type ContainerNode } from "./container-node";
+
+// nodeTypes/edgeTypes precisam de referência estável (React Flow re-monta tudo
+// se a referência muda a cada render). Definidos no escopo do módulo — após
+// TODOS os imports pra evitar TDZ com import statements.
+const NODE_TYPES = {
+  workflow: WorkflowNodeComponent,
+  sticky: StickyNoteNodeComponent,
+  container: ContainerNodeComponent,
+} as const;
+const EDGE_TYPES = { default: WorkflowEdge } as const;
 import { FlowToolbar } from "./flow-toolbar";
 import { FlowAlignBar } from "./flow-align-bar";
 import { FlowContextMenu } from "./flow-context-menu";
@@ -37,7 +51,7 @@ import type { NodeLibraryEntry } from "./node-library";
 import { NODE_ICON_MAP } from "./node-library";
 import { hydrateDefinition, serializeDefinition, type PersistedDefinition } from "./definition";
 import { autoLayout } from "./auto-layout";
-import { NodeConfigDialog, type NodeMeta } from "./node-config-dialog";
+import { NodeConfigDialog, type NodeMeta, type UpstreamInput } from "./node-config-dialog";
 import { NodeRunInspector } from "./node-run-inspector";
 import { WorkflowIdProvider } from "./workflow-context";
 import { CollabCursors } from "./collab-cursors";
@@ -225,6 +239,81 @@ type WorkflowCanvasProps = {
 // ── id generator ─────────────────────────────────────────────────────────
 // Garante unicidade entre canvases sem persistir contador. Usa crypto.randomUUID
 // quando disponível pra evitar choque com ids do backend (que também são UUIDs).
+/**
+ * Output de exemplo pra triggers — mostra a SHAPE esperada do payload quando
+ * o workflow ainda não rodou. Permite o user montar templates downstream
+ * (`{{ prev.body.X }}`) sem precisar disparar nada primeiro. Estilo "pin in
+ * events from Webhook" do n8n, mas sem precisar de listener.
+ */
+/**
+ * Mescla output real do run com o sample do tipo, preenchendo lacunas. Real
+ * sempre vence em chaves conflitantes. Pra triggers, garante que body/headers/
+ * query/params apareçam pro user arrastar mesmo quando o teste foi simples.
+ */
+function mergeOutputWithSample(
+  real: Record<string, unknown> | null | undefined,
+  sample: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!sample) return real ?? undefined;
+  if (!real || typeof real !== "object") return sample;
+  const out: Record<string, unknown> = { ...sample };
+  for (const [k, v] of Object.entries(real)) {
+    const existing = out[k];
+    if (
+      v &&
+      typeof v === "object" &&
+      !Array.isArray(v) &&
+      existing &&
+      typeof existing === "object" &&
+      !Array.isArray(existing)
+    ) {
+      // Recursivo: real fields supplement sample sem perder estrutura.
+      out[k] = mergeOutputWithSample(
+        v as Record<string, unknown>,
+        existing as Record<string, unknown>,
+      );
+    } else {
+      out[k] = v;
+    }
+  }
+  return out;
+}
+
+function defaultSampleOutput(nodeType: string | undefined): Record<string, unknown> | undefined {
+  if (nodeType === "webhook_trigger") {
+    return {
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "Mozilla/5.0",
+        host: "localhost:3010",
+      },
+      query: { example: "value" },
+      params: {},
+      body: {
+        hello: "world",
+        name: "exemplo",
+        items: [1, 2, 3],
+        nested: { foo: "bar" },
+      },
+      __webhook: {
+        method: "POST",
+        triggerId: "00000000-0000-0000-0000-000000000000",
+        receivedAt: "2026-01-01T00:00:00.000Z",
+      },
+    };
+  }
+  if (nodeType === "manual_trigger" || nodeType === "start") {
+    return { hello: "world", note: "Edite ou pine pra customizar." };
+  }
+  if (nodeType === "schedule_trigger" || nodeType === "interval_trigger") {
+    return {
+      firedAt: "2026-01-01T00:00:00.000Z",
+      cron: "0 * * * *",
+    };
+  }
+  return undefined;
+}
+
 function nextNodeId(): string {
   if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
     return crypto.randomUUID();
@@ -255,14 +344,7 @@ function Flow({
   onOpenCommentThread,
   inspectorMode = false,
 }: WorkflowCanvasProps) {
-  const nodeTypes = useMemo(
-    () => ({
-      workflow: WorkflowNodeComponent,
-      sticky: StickyNoteNodeComponent,
-      container: ContainerNodeComponent,
-    }),
-    [],
-  );
+  // Referencias estáveis vêm do escopo do módulo (NODE_TYPES/EDGE_TYPES).
 
   // Hidrata uma vez por definition recebida. Trocar de workflow remonta a rota
   // (key={id} no parent), então não precisa re-hidratar in-place.
@@ -375,6 +457,11 @@ function Flow({
 
   const { screenToFlowPosition, fitView, getNodes } = useReactFlow();
 
+  // Status de execução por nodeId — usado pra colorir edges em runtime.
+  // Lemos aqui (antes de `styledEdges`) pra evitar TDZ.
+  const focusedRunIdForEdges = useExecutionStore((s) => s.focusedRunId);
+  const stepsByNodeIdForEdges = useExecutionStore((s) => s.stepsByNodeId);
+
   // gradient+animated → pico viajante (SVG animateTransform); gradient sem animação →
   // gradient estático; sem gradient → cor sólida.
   const strokeRef = edgeStyle.gradient
@@ -408,45 +495,179 @@ function Flow({
       ...(edgeStyle.arrow
         ? { markerEnd: { type: MarkerType.ArrowClosed, color: edgeStyle.colorEnd } }
         : {}),
-      labelStyle: { fontSize: 11, fontFamily: "inherit", fill: "hsl(var(--foreground))" },
-      labelBgStyle: { fill: "hsl(var(--background))", fillOpacity: 0.8 },
-      labelBgPadding: [4, 2] as [number, number],
-      labelBgBorderRadius: 4,
+      // Defaults — sobreescritos por edge via `buildEdgeLabelStyle`.
+      labelStyle: { fontSize: 11, fontWeight: 600, fontFamily: "inherit", fill: "#ffffff" },
+      labelBgStyle: { fill: "#475569", fillOpacity: 1 },
+      labelBgPadding: [6, 3] as [number, number],
+      labelBgBorderRadius: 6,
     }),
     [edgeStyle, strokeRef, rfAnimated, pulseClass, glowFilter],
   );
 
+  // Status por edge — agora considera qual ramo o source TOMOU.
+  // - source running → todas edges azul (não sabemos qual será tomada)
+  // - source failed → todas edges vermelho
+  // - source success:
+  //   - if/filter (output.result): só edge com label "true"/"false" correto vira verde
+  //   - switch (output.matched): só edge com label igual ao `matched` vira verde
+  //   - outros: todas as edges saindo são verde (fluxo linear)
+  //   - Edges não tomadas → "skipped" (cinza apagado)
+  // "success-false" = edge tomada com label "false" (IF/Filter avaliou false).
+  // Renderizada em rose pra distinguir visualmente do "success-true" (emerald),
+  // mas semanticamente é uma execução bem-sucedida do ramo false.
+  type EdgeStatus = "running" | "success" | "success-false" | "failed" | "skipped" | "idle";
+  const edgeStatusMap = useMemo(() => {
+    const m = new Map<string, EdgeStatus>();
+    if (!focusedRunIdForEdges) return m;
+
+    // Index de nodes pra olhar o tipo do source rapidamente
+    const nodeTypeById = new Map<string, string>();
+    for (const n of nodes) {
+      const t = (n.data as { nodeType?: string })?.nodeType;
+      if (typeof t === "string") nodeTypeById.set(n.id, t);
+    }
+
+    const edgeKey = (e: Edge) => `${e.source}::${e.target}::${e.label ?? ""}`;
+
+    for (const e of edges) {
+      const step = stepsByNodeIdForEdges[e.source];
+      if (!step?.status) {
+        m.set(edgeKey(e), "idle");
+        continue;
+      }
+      if (step.status === "running") {
+        m.set(edgeKey(e), "running");
+        continue;
+      }
+      if (step.status === "failed") {
+        m.set(edgeKey(e), "failed");
+        continue;
+      }
+      // success — decide taken vs skipped baseado no tipo do source
+      const sourceType = nodeTypeById.get(e.source);
+      const output = step.output as Record<string, unknown> | null;
+      let isTaken = true;
+
+      let takenStatus: EdgeStatus = "success";
+      if ((sourceType === "if" || sourceType === "filter") && output) {
+        const out = output as { result?: unknown; _if?: { result?: unknown } };
+        const result =
+          out.result !== undefined ? out.result : out._if?.result;
+        const expectedLabel = result ? "true" : "false";
+        // Estratégia: tenta achar edge com label exato. Se não existe,
+        // espelha o engine (`pickLiveEdge`): cai no PRIMEIRO edge sem label
+        // como fallback — assim edges legados (sem dual-handle) ainda
+        // colorem corretamente.
+        const siblings = edges.filter((o) => o.source === e.source);
+        const exactSibling = siblings.find((o) => o.label === expectedLabel);
+        if (exactSibling) {
+          isTaken = e.id === exactSibling.id;
+        } else {
+          // Primeiro edge sem label vira o "tomado".
+          const fallback = siblings.find((o) => !o.label);
+          isTaken = !!fallback && e.id === fallback.id;
+        }
+        // Se tomado E o resultado foi false, marca semanticamente como
+        // "success-false" pra colorir em rose (mesmo se o label estiver vazio).
+        if (isTaken && !result) takenStatus = "success-false";
+      } else if (sourceType === "switch" && output) {
+        const matched = typeof output.matched === "string" ? output.matched : null;
+        const siblings = edges.filter((o) => o.source === e.source);
+        const exactSibling = matched !== null ? siblings.find((o) => o.label === matched) : null;
+        if (exactSibling) {
+          isTaken = e.id === exactSibling.id;
+        } else {
+          const fallback = siblings.find((o) => !o.label);
+          isTaken = !!fallback && e.id === fallback.id;
+        }
+      }
+
+      m.set(edgeKey(e), isTaken ? takenStatus : "skipped");
+    }
+    return m;
+  }, [focusedRunIdForEdges, stepsByNodeIdForEdges, edges, nodes]);
+
   const styledEdges = useMemo<Edge[]>(
     () =>
-      edges.map((e) => ({
-        ...e,
-        type: edgeStyle.type,
-        animated: rfAnimated,
-        className: cn(e.className, pulseClass),
-        style: {
-          ...(e.style ?? {}),
-          stroke: strokeRef,
-          strokeWidth: edgeStyle.thickness,
-          strokeDasharray: edgeStyle.dashed ? "6 4" : "none",
-          ...(glowFilter ? { filter: glowFilter } : {}),
-        },
-        markerEnd: edgeStyle.arrow
-          ? {
-              type: MarkerType.ArrowClosed,
-              color: edgeStyle.gradient ? edgeStyle.colorEnd : edgeStyle.color,
-            }
-          : undefined,
-        labelStyle: { fontSize: 11, fontFamily: "inherit", fill: "hsl(var(--foreground))" },
-        labelBgStyle: { fill: "hsl(var(--background))", fillOpacity: 0.8 },
-        labelBgPadding: [4, 2] as [number, number],
-        labelBgBorderRadius: 4,
-      })),
-    [edges, edgeStyle, strokeRef, rfAnimated, pulseClass, glowFilter],
+      edges.map((e) => {
+        const edgeKey = `${e.source}::${e.target}::${e.label ?? ""}`;
+        const edgeStatus = edgeStatusMap.get(edgeKey);
+        // Estilo n8n: edge verde fluindo no caminho tomado, cinza apagado no
+        // caminho não tomado (skipped), azul pulsando durante, vermelho ao falhar.
+        const runtimeStroke =
+          edgeStatus === "success"
+            ? "#10b981" // emerald — ramo true / fluxo linear taken
+            : edgeStatus === "success-false"
+              ? "#f43f5e" // rose — ramo false taken (sucesso, mas distintivo)
+              : edgeStatus === "running"
+                ? "#0ea5e9"
+                : edgeStatus === "failed"
+                  ? "#f43f5e"
+                  : edgeStatus === "skipped"
+                    ? "#94a3b8"
+                    : null;
+        const runtimeAnimated =
+          edgeStatus === "success"
+          || edgeStatus === "success-false"
+          || edgeStatus === "running";
+        const stroke = runtimeStroke ?? strokeRef;
+        // Skipped: opacity reduzida pra "apagar" visualmente o ramo não tomado
+        const opacity = edgeStatus === "skipped" ? 0.35 : 1;
+        return {
+          ...e,
+          type: edgeStyle.type,
+          animated: runtimeAnimated || rfAnimated,
+          className: cn(e.className, pulseClass),
+          style: {
+            ...(e.style ?? {}),
+            stroke,
+            strokeWidth: runtimeStroke ? edgeStyle.thickness + 0.5 : edgeStyle.thickness,
+            strokeDasharray:
+              edgeStatus === "skipped"
+                ? "4 4"
+                : edgeStyle.dashed && !runtimeStroke
+                  ? "6 4"
+                  : "none",
+            opacity,
+            ...(glowFilter && !runtimeStroke ? { filter: glowFilter } : {}),
+          },
+          markerEnd: edgeStyle.arrow
+            ? {
+                type: MarkerType.ArrowClosed,
+                color: runtimeStroke ?? (edgeStyle.gradient ? edgeStyle.colorEnd : edgeStyle.color),
+              }
+            : undefined,
+          // Labels n8n-style: fundo colorido por semântica + texto branco bold.
+          // true/false/0/1 ganham cores específicas pra leitura imediata no canvas.
+          ...buildEdgeLabelStyle(typeof e.label === "string" ? e.label : undefined),
+        };
+      }),
+    [edges, edgeStyle, strokeRef, rfAnimated, pulseClass, glowFilter, edgeStatusMap],
   );
 
+  // Helper: estilo do label baseado no valor (true/false/0/1/outros).
+  // Definido inline pra evitar shadowing — `useMemo` acima já depende disso
+  // indiretamente via `edges`.
+
   const onConnect = useCallback(
-    (params: Connection) =>
-      setEdges((eds) => addEdge({ ...params, animated: edgeStyle.animated }, eds)),
+    (params: Connection) => {
+      // Quando arrastam do handle "true"/"false" do IF/Filter, o sourceHandle
+      // vira o label da aresta — assim o engine roteia o run pelo ramo certo.
+      const label =
+        params.sourceHandle === "true" || params.sourceHandle === "false"
+          ? params.sourceHandle
+          : undefined;
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...params,
+            animated: edgeStyle.animated,
+            ...(label && { label, data: { label } }),
+          },
+          eds,
+        ),
+      );
+    },
     [setEdges, edgeStyle.animated],
   );
 
@@ -500,15 +721,62 @@ function Flow({
     setNodes((prev) => [...prev, node as Node]);
   }, [setNodes, centerFlowPosition]);
 
+  // Quando o user clica no "+" do handle de algum nó, guardamos a origem aqui
+  // (nodeId + handleId opcional). Ao escolher um nó na biblioteca, criamos
+  // o nó + aresta do source → novo nó com label do handle (pra IF/Filter).
+  const pendingSourceRef = useRef<{ nodeId: string; handleId?: string } | null>(null);
+
   const handleAddFromLibrary = useCallback(
     (entry: NodeLibraryEntry) => {
       const id = nextNodeId();
-      const pos = centerFlowPosition();
+      const pending = pendingSourceRef.current;
+      pendingSourceRef.current = null;
+      const sourceId = pending?.nodeId;
+      const sourceHandle = pending?.handleId;
+      // Posiciona à direita do source quando temos origem. Sem origem (modo
+      // livre), no centro do viewport.
+      let pos = centerFlowPosition();
+      if (sourceId) {
+        const src = nodesRef.current.find((n) => n.id === sourceId);
+        if (src) {
+          // Offset Y baseado no handle: true sobe, false desce, default centro.
+          const yOff =
+            sourceHandle === "true" ? -40 : sourceHandle === "false" ? 40 : 0;
+          pos = { x: (src.position?.x ?? 0) + 280, y: (src.position?.y ?? 0) + yOff };
+        }
+      }
       const node = entry.build({ x: pos.x - 110, y: pos.y - 40 }, id);
       setNodes((prev) => [...prev, node]);
+      if (sourceId) {
+        const label =
+          sourceHandle === "true" || sourceHandle === "false" ? sourceHandle : undefined;
+        setEdges((prev) => [
+          ...prev,
+          {
+            id: `e${Date.now()}-${sourceId}-${id}`,
+            source: sourceId,
+            target: id,
+            ...(sourceHandle && { sourceHandle }),
+            ...(label && { label, data: { label } }),
+            animated: true,
+          } as Edge,
+        ]);
+      }
     },
-    [setNodes, centerFlowPosition],
+    [setNodes, setEdges, centerFlowPosition],
   );
+
+  useEffect(() => {
+    function onAddNext(e: Event) {
+      const evt = e as CustomEvent<WorkflowNodeAddNextDetail>;
+      const sourceId = evt.detail?.nodeId;
+      if (!sourceId) return;
+      pendingSourceRef.current = { nodeId: sourceId, handleId: evt.detail?.handleId };
+      setLibraryOpen(true);
+    }
+    window.addEventListener(WORKFLOW_NODE_ADD_NEXT_EVENT, onAddNext);
+    return () => window.removeEventListener(WORKFLOW_NODE_ADD_NEXT_EVENT, onAddNext);
+  }, [setLibraryOpen]);
 
   // ── Auto-organizar ─────────────────────────────────────────────────────
   // Disparado pelo botão Sparkles na toolbar (e pelo atalho Shift+A). Aplica
@@ -865,7 +1133,8 @@ function Flow({
               : nodes
           }
           edges={styledEdges}
-          nodeTypes={nodeTypes}
+          nodeTypes={NODE_TYPES}
+          edgeTypes={EDGE_TYPES}
           defaultEdgeOptions={defaultEdgeOptions}
           connectionLineType={edgeStyle.type}
           connectionLineStyle={{ stroke: edgeStyle.color, strokeWidth: edgeStyle.thickness }}
@@ -896,7 +1165,9 @@ function Flow({
         >
           <Background
             variant={backgroundVariant}
-            gap={16}
+            // gap=20 espelha o `GRID_SIZE` oficial do n8n — espaçamento
+            // dos dots fica idêntico ao canvas que o usuário conhece.
+            gap={20}
             // Cross precisa de braço mínimo ~6px pra render; Dots/Lines ficam
             // bem com 1px. Hardcodar 1 deixava o "+" invisível (parecia Dots).
             size={backgroundVariant === BackgroundVariant.Cross ? 6 : 1}
@@ -1036,6 +1307,64 @@ function Flow({
         meta={configState?.meta}
         values={configState?.values ?? {}}
         onSave={handleConfigSave}
+        upstreamInputs={
+          configState?.nodeId
+            ? buildUpstreamInputs(configState.nodeId, edgesRef.current, stepsByNodeIdForEdges, pinnedMap, nodesRef.current)
+            : []
+        }
+        outputData={
+          configState?.nodeId
+            ? (configState.nodeId in pinnedMap
+                ? pinnedMap[configState.nodeId]
+                : // Mescla sample (estrutura completa) com real (valores observados).
+                  // Real ganha em conflito; sample preenche campos ausentes pra dar
+                  // ao user a árvore completa pra arrastar templates.
+                  mergeOutputWithSample(
+                    (stepsByNodeIdForEdges[configState.nodeId]?.output ?? null) as
+                      | Record<string, unknown>
+                      | null,
+                    defaultSampleOutput(configState.nodeType),
+                  ))
+            : undefined
+        }
+        outputPinned={configState?.nodeId ? configState.nodeId in pinnedMap : false}
+        outputIsSample={
+          // "exemplo" quando o output mostrado contém pelo menos parte de sample
+          // (sem pin, e o sample existe). Aceita também caso o real seja parcial
+          // — o user precisa saber que alguns campos são placeholders.
+          configState?.nodeId
+            ? !(configState.nodeId in pinnedMap)
+              && defaultSampleOutput(configState.nodeType) !== undefined
+            : false
+        }
+        onTogglePin={
+          configState?.nodeId
+            ? () => {
+                const nid = configState.nodeId as string;
+                if (nid in pinnedMap) {
+                  pinnedDataApi.remove(workflowId, nid);
+                } else {
+                  const out = stepsByNodeIdForEdges[nid]?.output;
+                  if (out && typeof out === "object") {
+                    pinnedDataApi.set(workflowId, nid, out as Record<string, unknown>);
+                  }
+                }
+              }
+            : undefined
+        }
+        onEditOutput={
+          configState?.nodeId
+            ? () => {
+                // Reusa o PinEditorDialog já existente — dispara via window event
+                // que a rota `flow.tsx` escuta e abre o editor de JSON livre.
+                window.dispatchEvent(
+                  new CustomEvent("workflow:node-pin-edit", {
+                    detail: { nodeId: configState.nodeId },
+                  }),
+                );
+              }
+            : undefined
+        }
       />
       <NodeRunInspector
         open={inspectorOpen}
@@ -1112,3 +1441,116 @@ export const WorkflowCanvas = forwardRef<WorkflowCanvasHandle, WorkflowCanvasPro
     );
   },
 );
+
+/**
+ * Constrói a lista de UpstreamInput pro painel esquerdo do NodeConfigDialog.
+ * Vasculha as edges em direção ao `targetNodeId` e coleta o output de cada
+ * source (do step do run focado OU do pinned data, com pin tendo prioridade).
+ *
+ * `nodes` é usado pra extrair o label humano de cada upstream (título
+ * customizado ou nodeType como fallback).
+ */
+/**
+ * Estilo do label da edge por valor — leitura semântica imediata no canvas.
+ * `true`/`0` → verde (caminho sim do if/switch primeiro)
+ * `false`/`1` → vermelho (caminho não/segunda saída)
+ * outros → âmbar (saídas custom do switch, ai_languageModel, etc.)
+ *
+ * Texto sempre branco bold pra contraste alto em qualquer background.
+ */
+function buildEdgeLabelStyle(label: string | undefined): {
+  labelStyle: Record<string, unknown>;
+  labelBgStyle: Record<string, unknown>;
+  labelBgPadding: [number, number];
+  labelBgBorderRadius: number;
+} {
+  if (!label) {
+    return {
+      labelStyle: { fontSize: 11, fontWeight: 600, fontFamily: "inherit", fill: "#ffffff" },
+      labelBgStyle: { fill: "#475569", fillOpacity: 0 },
+      labelBgPadding: [6, 3],
+      labelBgBorderRadius: 6,
+    };
+  }
+  const isTrue = label === "true" || label === "0";
+  const isFalse = label === "false" || label === "1";
+  const bg = isTrue ? "#10b981" : isFalse ? "#ef4444" : "#f59e0b";
+  return {
+    labelStyle: {
+      fontSize: 11,
+      fontWeight: 700,
+      fontFamily: "inherit",
+      fill: "#ffffff",
+      letterSpacing: 0.3,
+    },
+    labelBgStyle: { fill: bg, fillOpacity: 1 },
+    labelBgPadding: [8, 4],
+    labelBgBorderRadius: 8,
+  };
+}
+
+/**
+ * Coleta TODOS os ancestrais transitivos do node alvo (BFS reverso pelo grafo).
+ * Estilo n8n: o usuário arrasta paths de qualquer node anterior já executado,
+ * não só do pai direto. Ordem: pais diretos primeiro, depois avós, e por aí —
+ * profundidade crescente, deduplica IDs.
+ *
+ * Filtra pra incluir só nodes que TÊM dados (step com output OU pin),
+ * porque não faz sentido arrastar de nó vazio.
+ */
+function buildUpstreamInputs(
+  targetNodeId: string,
+  edges: Edge[],
+  stepsByNodeId: Record<string, { output?: Record<string, unknown> | null }>,
+  pinnedMap: Record<string, Record<string, unknown>>,
+  nodes: Node[],
+): UpstreamInput[] {
+  // Mapa target → sources pra BFS reverso (uma só passada na lista de edges).
+  const inEdges = new Map<string, string[]>();
+  for (const e of edges) {
+    if (!inEdges.has(e.target)) inEdges.set(e.target, []);
+    inEdges.get(e.target)!.push(e.source);
+  }
+
+  // BFS reverso a partir do target — coleta ancestrais em camadas.
+  const visited = new Set<string>([targetNodeId]);
+  const ordered: string[] = [];
+  let frontier = inEdges.get(targetNodeId) ?? [];
+  while (frontier.length > 0) {
+    const next: string[] = [];
+    for (const id of frontier) {
+      if (visited.has(id)) continue;
+      visited.add(id);
+      ordered.push(id);
+      const parents = inEdges.get(id);
+      if (parents) next.push(...parents);
+    }
+    frontier = next;
+  }
+
+  // Mapeia cada ID pra UpstreamInput. Quando o nó não tem run nem pin, cai
+  // pro sample default (triggers têm exemplo de payload) — assim o user
+  // consegue arrastar campos pra montar `{{ prev.body.X }}` antes do 1º run.
+  const out: UpstreamInput[] = [];
+  for (const id of ordered) {
+    const node = nodes.find((n) => n.id === id);
+    const d = (node?.data ?? {}) as { title?: unknown; nodeType?: unknown };
+    const label =
+      (typeof d.title === "string" && d.title.trim()) ||
+      (typeof d.nodeType === "string" && d.nodeType) ||
+      id.slice(0, 8);
+    const isPinned = id in pinnedMap;
+    const nt = typeof d.nodeType === "string" ? d.nodeType : undefined;
+    const sample = defaultSampleOutput(nt);
+    const realData = isPinned
+      ? pinnedMap[id]
+      : (stepsByNodeId[id]?.output as Record<string, unknown> | null | undefined);
+    // Mescla pra que campos do sample apareçam mesmo quando o run real foi
+    // testado com payload simplificado. Real vence em conflito.
+    const data = isPinned ? realData : (mergeOutputWithSample(realData ?? null, sample) ?? null);
+    if (data !== null && data !== undefined) {
+      out.push({ nodeId: id, label, output: data, pinned: isPinned });
+    }
+  }
+  return out;
+}

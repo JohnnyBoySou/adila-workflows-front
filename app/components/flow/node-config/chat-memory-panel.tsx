@@ -20,6 +20,7 @@
  *     content: string
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Download,
@@ -102,9 +103,9 @@ export function ChatMemoryPanel({ values, onChange, onError, nodeId }: CustomPan
   const sessionMissing = sessionId.trim() === "";
   const contentMissing = op === "append" && content.trim() === "";
 
-  onError?.("connectionString", connMissing ? "Informe a connection string." : null);
-  onError?.("sessionId", sessionMissing ? "Informe o sessionId." : null);
-  onError?.("content", contentMissing ? "Informe o conteúdo." : null);
+  useFieldError(onError, "connectionString", connMissing ? "Informe a connection string." : null);
+  useFieldError(onError, "sessionId", sessionMissing ? "Informe o sessionId." : null);
+  useFieldError(onError, "content", contentMissing ? "Informe o conteúdo." : null);
 
   function set(patch: Record<string, unknown>) {
     onChange(patch);

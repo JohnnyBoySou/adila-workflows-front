@@ -290,9 +290,12 @@ export function FlowTopBar({
         <Button
           size="icon-sm"
           className="rounded-full"
-          onClick={onRun}
-          aria-label="Executar"
-          title="Executar"
+          // Envelope sem args — handleRun(stopAtNodeId?) interpretaria o
+          // SyntheticEvent como stopAtNodeId truthy → rodava só até "esse"
+          // nó (que não existe) e parava. Bug clássico de propagação.
+          onClick={() => onRun?.()}
+          aria-label="Executar workflow completo"
+          title="Executar workflow completo (Play)"
         >
           <Play className="size-4" />
         </Button>

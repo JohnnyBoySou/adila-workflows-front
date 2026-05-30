@@ -16,11 +16,13 @@ import {
   MessageSquare,
   Pin,
   Play,
+  Plus,
   Power,
   Sparkles,
   Square,
   Trash2,
   Workflow as WorkflowIcon,
+  Zap,
 } from "lucide-react";
 
 import { Button } from "~/components/ui/button";
@@ -39,6 +41,18 @@ import { NODE_ICON_MAP } from "./node-library";
  */
 export const WORKFLOW_NODE_PLAY_EVENT = "workflow:node-play";
 export type WorkflowNodePlayDetail = { nodeId: string };
+
+/**
+ * Evento global: usuário clicou no "+" do handle source pra adicionar o próximo
+ * nó. O canvas escuta, abre a biblioteca de nós e, ao selecionar, cria o nó
+ * conectado a este. Estilo n8n.
+ */
+export const WORKFLOW_NODE_ADD_NEXT_EVENT = "workflow:node-add-next";
+export type WorkflowNodeAddNextDetail = {
+  nodeId: string;
+  /** id do source handle clicado — "true"/"false" pro IF/Filter, undefined pros demais. */
+  handleId?: string;
+};
 
 const EXECUTION_RING: Record<NodeExecutionStatus, string> = {
   running: "ring-2 ring-sky-500 ring-offset-1 ring-offset-background",
@@ -163,15 +177,30 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
   }, [id, deleteElements]);
 
   return (
-    <Card
-      className={cn(
-        "w-56 gap-2 py-3 transition-shadow !overflow-visible",
-        selected && "ring-2 ring-ring",
-        data.disabled && "opacity-50",
-        isTrigger && "rounded-l-[1.75rem]",
-        executionRing,
+    // Wrapper relativo pra abrigar título/descrição absolutos abaixo do card
+    // e o "raio" laranja absoluto à esquerda quando trigger.
+    <div className="relative">
+      {/* Raio laranja indicador de trigger — fora do card, à esquerda */}
+      {isTrigger && (
+        <span
+          className="pointer-events-none absolute -left-7 top-1/2 -translate-y-1/2 grid size-5 place-items-center"
+          aria-hidden
+          title="Trigger"
+        >
+          <Zap className="size-5 fill-orange-500 text-orange-500" strokeWidth={1.5} />
+        </span>
       )}
-    >
+      <Card
+        className={cn(
+          // Card minimalista: 112×112, rounded-2xl, ícone grande no centro.
+          // Texto FORA do card (abaixo, absolute).
+          "relative flex size-28 items-center justify-center !overflow-visible rounded-2xl border-border/60 bg-card p-0 shadow-md",
+          selected && "ring-2 ring-ring",
+          data.disabled && "opacity-50",
+          executionRing,
+          executionStatus === "running" && "animate-pulse",
+        )}
+      >
       <AnimatePresence>
         {selected && (
           <NodeToolbar isVisible position={Position.Top} offset={8}>
@@ -250,10 +279,21 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
       )}
 
       {!isTrigger && (
+        // Input handle estilo n8n: retângulo cinza no lado esquerdo.
+        // Verde quando o nó está running/success no run focado.
         <Handle
           type="target"
           position={Position.Left}
-          className="!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4"
+          className={cn(
+            "!z-10 !h-4 !w-2 !rounded-sm !border !border-background transition-colors",
+            executionStatus === "success"
+              ? "!bg-emerald-500"
+              : executionStatus === "failed"
+                ? "!bg-rose-500"
+                : executionStatus === "running"
+                  ? "!bg-sky-500"
+                  : "!bg-slate-400 dark:!bg-slate-500",
+          )}
         />
       )}
 
@@ -283,24 +323,11 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
           <Pin className="size-2.5" />
         </button>
       )}
-      <CardHeader className={cn("flex flex-row items-center gap-2 px-3", isTrigger && "pl-6")}>
-        <span
-          className={cn(
-            "grid size-7 shrink-0 place-items-center rounded-md",
-            !customIconColor && meta.iconBg,
-          )}
-          style={customIconColor ? { backgroundColor: `${customIconColor}26` } : undefined}
-        >
-          <Icon
-            className={cn("size-4", !customIconColor && iconColor)}
-            style={customIconColor ? { color: customIconColor } : undefined}
-          />
-        </span>
-        <CardTitle className="text-sm">{data.title}</CardTitle>
-      </CardHeader>
-      {data.description ? (
-        <CardContent className={cn("px-3 text-xs text-muted-foreground", isTrigger && "pl-6")}>{data.description}</CardContent>
-      ) : null}
+      {/* Apenas o ícone grande centralizado — sem texto interno */}
+      <Icon
+        className={cn("size-12", !customIconColor && iconColor)}
+        style={customIconColor ? { color: customIconColor } : undefined}
+      />
 
       {/* Comment indicator (when comment exists and popover is closed) */}
       {data.comment && !commentOpen && (
@@ -312,25 +339,158 @@ function WorkflowNodeComponent({ id, data, selected }: NodeProps<WorkflowNode>) 
         </span>
       )}
 
-      <Handle
-        type="source"
-        position={Position.Right}
-        className={cn(
-          "!z-10 !size-2.5 !border-2 !border-background !bg-primary transition-[width,height] duration-150 hover:!size-4",
-          fanOut && "!size-3.5 !bg-amber-500 !ring-2 !ring-amber-500/30",
+      {/* Output handles. IF/Filter renderizam DOIS handles (true/false) com
+          rótulos visíveis. Demais tipos renderizam só um handle simples.
+          Drag-to-connect nativo + click no "+" abre a biblioteca. */}
+      {data.nodeType === "if" || data.nodeType === "filter" ? (
+        <>
+          <BranchHandle
+            id="true"
+            label="true"
+            color="emerald"
+            offsetY={-22}
+            executionStatus={executionStatus}
+            nodeId={id}
+          />
+          <BranchHandle
+            id="false"
+            label="false"
+            color="rose"
+            offsetY={22}
+            executionStatus={executionStatus}
+            nodeId={id}
+          />
+        </>
+      ) : (
+        <Handle
+          type="source"
+          position={Position.Right}
+          className={cn(
+            "!z-10 !size-5 !rounded-full !border-2 !border-background transition-colors",
+            executionStatus === "success"
+              ? "!bg-emerald-500"
+              : executionStatus === "failed"
+                ? "!bg-rose-500"
+                : executionStatus === "running"
+                  ? "!bg-sky-500"
+                  : "!bg-muted-foreground/70 hover:!bg-primary",
+            fanOut && "!ring-2 !ring-amber-500/40",
+          )}
+          onClick={(e) => {
+            e.stopPropagation();
+            window.dispatchEvent(
+              new CustomEvent<WorkflowNodeAddNextDetail>(WORKFLOW_NODE_ADD_NEXT_EVENT, {
+                detail: { nodeId: id },
+              }),
+            );
+          }}
+        >
+          {fanOut ? (
+            <span
+              className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[9px] font-bold leading-none text-background"
+              aria-hidden
+            >
+              {outgoing.length}
+            </span>
+          ) : (
+            <Plus
+              className="pointer-events-none absolute left-1/2 top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 text-background"
+              strokeWidth={3}
+              aria-hidden
+            />
+          )}
+        </Handle>
+      )}
+      </Card>
+      {/* Título e descrição FORA do card, absolutos abaixo — estilo screenshot */}
+      <div className="pointer-events-none absolute left-1/2 top-full mt-2 w-44 -translate-x-1/2 select-none text-center">
+        <div className="text-[13px] font-semibold leading-tight text-foreground line-clamp-2">
+          {data.title}
+        </div>
+        {data.description && (
+          <div className="mt-0.5 line-clamp-1 text-[11px] leading-tight text-muted-foreground">
+            {data.description}
+          </div>
         )}
-      >
-        {fanOut && (
-          <span
-            className="pointer-events-none absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-[8px] font-bold leading-none text-background"
-            aria-hidden
-          >
-            {outgoing.length}
-          </span>
-        )}
-      </Handle>
-    </Card>
+      </div>
+    </div>
   );
 }
 
 export default memo(WorkflowNodeComponent);
+
+/* -------------------------------------------------------------------------- */
+/* Branch Handle (IF/Filter)                                                  */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Handle visualizado de saída condicional (true/false). Posicionado à
+ * direita do card com offset vertical, exibe um rótulo colado fora. Mantém
+ * o mesmo comportamento de drag-to-connect + click pra abrir biblioteca.
+ */
+function BranchHandle({
+  id: handleId,
+  label,
+  color,
+  offsetY,
+  executionStatus,
+  nodeId,
+}: {
+  id: "true" | "false";
+  label: string;
+  color: "emerald" | "rose";
+  offsetY: number;
+  executionStatus: NodeExecutionStatus | undefined;
+  nodeId: string;
+}) {
+  const bgClass =
+    executionStatus === "success"
+      ? "!bg-emerald-500"
+      : executionStatus === "failed"
+        ? "!bg-rose-500"
+        : executionStatus === "running"
+          ? "!bg-sky-500"
+          : color === "emerald"
+            ? "!bg-emerald-500/70 hover:!bg-emerald-500"
+            : "!bg-rose-500/70 hover:!bg-rose-500";
+  const labelClass =
+    color === "emerald"
+      ? "border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400"
+      : "border-rose-500/40 bg-rose-500/10 text-rose-700 dark:text-rose-400";
+  return (
+    <Handle
+      type="source"
+      position={Position.Right}
+      id={handleId}
+      style={{ top: `calc(50% + ${offsetY}px)` }}
+      className={cn(
+        "!z-10 !size-5 !rounded-full !border-2 !border-background transition-colors",
+        bgClass,
+      )}
+      onClick={(e) => {
+        e.stopPropagation();
+        window.dispatchEvent(
+          new CustomEvent<WorkflowNodeAddNextDetail>(WORKFLOW_NODE_ADD_NEXT_EVENT, {
+            detail: { nodeId, handleId },
+          }),
+        );
+      }}
+    >
+      {/* "+" central */}
+      <Plus
+        className="pointer-events-none absolute left-1/2 top-1/2 size-3 -translate-x-1/2 -translate-y-1/2 text-background"
+        strokeWidth={3}
+        aria-hidden
+      />
+      {/* Label fixo logo à direita */}
+      <span
+        className={cn(
+          "pointer-events-none absolute left-full top-1/2 ml-2 -translate-y-1/2 select-none rounded-full border px-2 py-0.5 font-mono text-[10px] font-semibold",
+          labelClass,
+        )}
+      >
+        {label}
+      </span>
+    </Handle>
+  );
+}

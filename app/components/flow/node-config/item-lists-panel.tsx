@@ -11,6 +11,7 @@
  * `items` é template — resolvido em runtime; no painel de teste substituímos por array literal.
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { History, ListFilter, Loader2, Send } from "lucide-react";
 
@@ -70,8 +71,8 @@ export function ItemListsPanel({ values, onChange, onError, nodeId }: CustomPane
   const itemsMissing = !values.items;
   const filterOpMissing = op === "filter" && !readString(values.op);
 
-  onError?.("items", itemsMissing ? "Informe a coleção." : null);
-  onError?.("op", filterOpMissing ? "Escolha o comparador." : null);
+  useFieldError(onError, "items", itemsMissing ? "Informe a coleção." : null);
+  useFieldError(onError, "op", filterOpMissing ? "Escolha o comparador." : null);
 
   return (
     <Sections

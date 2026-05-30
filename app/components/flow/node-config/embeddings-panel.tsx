@@ -17,6 +17,7 @@
  *   texts?: string[] | string           — modo batch (no UI guardamos como JSON string ou array)
  */
 import { useMemo, useState } from "react";
+import { useFieldError } from "./use-field-error";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   Boxes,
@@ -110,8 +111,8 @@ export function EmbeddingsPanel({ values, onChange, onError, nodeId }: CustomPan
   const modelMissing = model.trim() === "";
   const baseUrlMissing = provider === "custom" && baseUrl.trim() === "";
 
-  onError?.("model", modelMissing ? "Informe o modelo." : null);
-  onError?.("baseUrl", baseUrlMissing ? "Informe a baseUrl." : null);
+  useFieldError(onError, "model", modelMissing ? "Informe o modelo." : null);
+  useFieldError(onError, "baseUrl", baseUrlMissing ? "Informe a baseUrl." : null);
 
   function set(patch: Record<string, unknown>) {
     onChange(patch);

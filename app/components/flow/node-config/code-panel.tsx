@@ -146,9 +146,8 @@ function EditorSection({
   usingPins: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[1fr_18rem] gap-3 min-h-[480px]">
+    <div className="min-h-[480px]">
       <EditorPane code={code} onChange={onChange} ctx={ctx} />
-      <CtxInspector ctx={ctx} usingPins={usingPins} />
     </div>
   );
 }

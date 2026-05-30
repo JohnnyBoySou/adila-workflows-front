@@ -54,12 +54,18 @@ export function isDocEmpty(doc: Y.Doc): boolean {
  * o que economiza patches no backend e tráfego no WS.
  */
 export function syncToDoc(doc: Y.Doc, def: PersistedDefinition, origin: unknown) {
+  // Defensivo: workflows importados / antigos podem chegar com `nodes` ou
+  // `edges` ausentes. Sem isso, `for (const n of def.nodes)` explodia
+  // com `def.nodes is not iterable`.
+  const nodesList = Array.isArray(def.nodes) ? def.nodes : [];
+  const edgesList = Array.isArray(def.edges) ? def.edges : [];
+
   doc.transact(() => {
     const yNodes = doc.getMap<unknown>("nodes");
     const yEdges = doc.getMap<unknown>("edges");
 
     const wantNodeIds = new Set<string>();
-    for (const n of def.nodes) {
+    for (const n of nodesList) {
       wantNodeIds.add(n.id);
       const prev = yNodes.get(n.id);
       if (!shallowJsonEqual(prev, n)) yNodes.set(n.id, n);
@@ -69,7 +75,7 @@ export function syncToDoc(doc: Y.Doc, def: PersistedDefinition, origin: unknown)
     }
 
     const wantEdgeKeys = new Set<string>();
-    for (const e of def.edges) {
+    for (const e of edgesList) {
       const k = edgeKey(e);
       wantEdgeKeys.add(k);
       const prev = yEdges.get(k);

@@ -1,6 +1,7 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronDown,
+  ClipboardPaste,
   Copy,
   FolderPlus,
   LayoutGrid,
@@ -14,9 +15,10 @@ import {
   Upload,
   X
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router";
 
+import { notify } from "~/lib/notify";
 import { queryKeys } from "~/lib/query-keys";
 import type { Folder } from "~/services/folders";
 import * as foldersApi from "~/services/folders";
@@ -180,7 +182,128 @@ export default function WorkflowsListRoute() {
   const [folderDialogOpen, setFolderDialogOpen] = useState(false);
   const [workflowDialogOpen, setWorkflowDialogOpen] = useState(false);
   const [importDialogOpen, setImportDialogOpen] = useState(false);
+  const [pastedN8nText, setPastedN8nText] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
+
+  // Heurística pra reconhecer JSON do n8n: começa com `{` ou `[`, tem `"nodes"`
+  // e ("connections" OU "n8n-nodes-"). Não exige `"name"` no topo — alguns
+  // exports parciais do canvas vêm sem.
+  const looksLikeN8nJson = useCallback((s: string): boolean => {
+    const trimmed = s.trimStart();
+    if (!trimmed.startsWith("{") && !trimmed.startsWith("[")) return false;
+    return /"nodes"\s*:/.test(trimmed) &&
+      (/"connections"\s*:/.test(trimmed) || /n8n-nodes-/.test(trimmed));
+  }, []);
+
+  // Lê do clipboard via API (mais confiável que paste event no body) e abre
+  // o dialog se for JSON do n8n. Funciona pro botão E pro atalho Ctrl+V.
+  //
+  // Estratégia em camadas:
+  //  1. clipboard.read() — lê QUALQUER tipo MIME (n8n às vezes copia como
+  //     `application/json` em vez de `text/plain`).
+  //  2. clipboard.readText() — fallback se `read()` não estiver disponível.
+  //  3. Se ambos negados pelo browser, retorna `reason` claro pro caller
+  //     mostrar pro usuário.
+  const tryPasteFromClipboard = useCallback(async (): Promise<{ ok: boolean; reason?: string; text?: string }> => {
+    if (!navigator.clipboard) {
+      return { ok: false, reason: "Clipboard API indisponível. Use o botão e cole no campo." };
+    }
+
+    async function readMultiFormat(): Promise<string | null> {
+      // Tenta `read()` primeiro — pega application/json, text/html, text/plain.
+      if (typeof navigator.clipboard.read === "function") {
+        try {
+          const items = await navigator.clipboard.read();
+          for (const item of items) {
+            // Ordem de preferência: json puro > plain > html
+            const preferredTypes = ["application/json", "text/plain", "text/html"];
+            for (const t of preferredTypes) {
+              if (item.types.includes(t)) {
+                const blob = await item.getType(t);
+                const text = await blob.text();
+                // text/html pode vir com tags — extrai texto puro entre eles.
+                if (t === "text/html") {
+                  const stripped = text.replace(/<[^>]+>/g, "").trim();
+                  if (stripped) return stripped;
+                  continue;
+                }
+                if (text) return text;
+              }
+            }
+          }
+        } catch {
+          /* cai pro readText */
+        }
+      }
+      if (typeof navigator.clipboard.readText === "function") {
+        try {
+          return await navigator.clipboard.readText();
+        } catch {
+          return null;
+        }
+      }
+      return null;
+    }
+
+    const txt = await readMultiFormat();
+    if (txt === null) {
+      return {
+        ok: false,
+        reason:
+          "O navegador negou acesso ao clipboard. Clique no botão 'Colar n8n', aceite a permissão, ou cole manualmente no campo do dialog.",
+      };
+    }
+    if (!txt || txt.length < 20) {
+      return { ok: false, reason: "Clipboard vazio ou texto curto demais." };
+    }
+    if (!looksLikeN8nJson(txt)) {
+      return {
+        ok: false,
+        reason:
+          "Não parece JSON do n8n. Verifique se copiou o workflow inteiro (deve começar com '{' e conter 'nodes' e 'connections').",
+        text: txt.slice(0, 80),
+      };
+    }
+    setPastedN8nText(txt);
+    setImportDialogOpen(true);
+    return { ok: true };
+  }, [looksLikeN8nJson]);
+
+  // Atalho global Ctrl+V (Cmd+V no Mac): se não estiver num campo editável,
+  // tenta importar do clipboard. Mais confiável que escutar `paste` no document
+  // (alguns browsers não despacham paste pro document quando o body está sem foco).
+  useEffect(() => {
+    function isEditableTarget(t: EventTarget | null): boolean {
+      if (!(t instanceof HTMLElement)) return false;
+      const tag = t.tagName;
+      if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return true;
+      if (t.isContentEditable) return true;
+      return false;
+    }
+    function onKeydown(e: KeyboardEvent) {
+      // Ctrl+V no Linux/Win, Cmd+V no Mac. Ignora se Shift (paste especial).
+      const isPaste = (e.ctrlKey || e.metaKey) && (e.key === "v" || e.key === "V") && !e.shiftKey;
+      if (!isPaste) return;
+      if (isEditableTarget(e.target) || isEditableTarget(document.activeElement)) return;
+      if (importDialogOpen || workflowDialogOpen || folderDialogOpen) return;
+
+      // Feedback visível pro usuário — sem isso, o Ctrl+V "não cola e ninguém
+      // entende por quê". Toast aparece em sucesso E em falha.
+      tryPasteFromClipboard().then((res) => {
+        if (res.ok) {
+          notify({ title: "JSON do n8n detectado", description: "Abrindo importador…" });
+        } else if (res.reason) {
+          notify({
+            title: "Ctrl+V não importou",
+            description: res.reason,
+            durationMs: 8000,
+          });
+        }
+      });
+    }
+    window.addEventListener("keydown", onKeydown);
+    return () => window.removeEventListener("keydown", onKeydown);
+  }, [importDialogOpen, workflowDialogOpen, folderDialogOpen, tryPasteFromClipboard]);
 
   const moveWorkflow = useMoveWorkflow();
 
@@ -288,6 +411,31 @@ export default function WorkflowsListRoute() {
         </div>
         <div className="flex items-center gap-2">
           <ViewToggle value={view} onChange={(v) => setParam("view", v === "grid" ? null : v)} />
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={async () => {
+              const res = await tryPasteFromClipboard();
+              if (res.ok) {
+                notify({ title: "JSON do n8n detectado", description: "Abrindo importador…" });
+              } else {
+                // Mostra a razão e abre o dialog vazio pra usuário colar manualmente.
+                if (res.reason) {
+                  notify({
+                    title: "Não consegui ler o clipboard",
+                    description: `${res.reason} Cole manualmente no campo abaixo.`,
+                    durationMs: 8000,
+                  });
+                }
+                setPastedN8nText(null);
+                setImportDialogOpen(true);
+              }
+            }}
+            title="Cola um workflow do n8n direto do clipboard (Ctrl+V também funciona)"
+          >
+            <ClipboardPaste className="size-4" />
+            Colar n8n
+          </Button>
           <CreateActionsMenu
             onNewWorkflow={() => setWorkflowDialogOpen(true)}
             onNewFolder={() => setFolderDialogOpen(true)}
@@ -413,8 +561,12 @@ export default function WorkflowsListRoute() {
       />
       <N8nImportDialog
         open={importDialogOpen}
-        onOpenChange={setImportDialogOpen}
+        onOpenChange={(next) => {
+          setImportDialogOpen(next);
+          if (!next) setPastedN8nText(null);
+        }}
         folderId={folderId}
+        initialText={pastedN8nText ?? undefined}
         onImported={(wf) => navigate(`/flow/${wf.id}`)}
       />
     </div>

@@ -29,6 +29,9 @@ import {
   type WorkflowNodePinEditDetail,
 } from "~/components/flow/pin-editor-dialog";
 import { useSession } from "~/lib/auth-client";
+import { subscribeToRunEvents } from "~/services/run-events";
+import { useExecutionStore } from "~/stores/execution";
+import type { RunStep } from "~/services/runs";
 import { useCollaboration, type RemotePresence } from "~/hooks/use-collaboration";
 import { useOrgMembersIndex } from "~/hooks/use-org-members";
 import { useWorkflowComments } from "~/hooks/use-workflow-comments";
@@ -313,11 +316,117 @@ function FlowRouteInner() {
       });
     },
     onSuccess: (res) => {
+      // NÃO troca pra aba "executions" imediatamente — fica no canvas pra usuário
+      // ver a animação dos nós ficando verdes em tempo real. O useEffect abaixo
+      // conecta SSE direto no executionStore e troca pra tab quando o run termina.
       setFocusedRunId(res.runId);
-      setTab("executions");
       queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(id!) });
     },
   });
+
+  // ── Live animation: SSE → executionStore, independente da aba ─────────
+  // Hoje o canvas (`WorkflowNodeComponent`) lê `executionStore.stepsByNodeId`
+  // pra pintar anel verde/sky/rose. Antes só a aba "executions" alimentava
+  // o store via SSE, então a animação só rolava se o usuário trocasse de tab.
+  // Aqui mantemos o stream aberto enquanto há run focado — assim o canvas
+  // anima em tempo real e só pulamos pra `executions` quando o run termina.
+  const setFocused = useExecutionStore((s) => s.setFocused);
+  const upsertStep = useExecutionStore((s) => s.upsertStep);
+  const clearExecution = useExecutionStore((s) => s.clear);
+  useEffect(() => {
+    if (!id || !focusedRunId) return;
+    let cancelled = false;
+    // Pré-carrega steps via REST: garante anel verde em runs terminais mesmo
+    // se o snapshot SSE chegar depois ou o stream fechar antes (alguns proxies
+    // bufferizam). SSE depois sobrescreve com state mais recente.
+    runsApi
+      .listSteps(id, focusedRunId)
+      .then((steps) => {
+        if (!cancelled) setFocused(focusedRunId, steps);
+      })
+      .catch(() => {});
+    const sub = subscribeToRunEvents(id, focusedRunId, {
+      onSnapshot: (evt) => {
+        setFocused(focusedRunId, evt.steps as unknown as RunStep[]);
+      },
+      onStepStart: (evt) => {
+        const step: RunStep = {
+          id: `live_${evt.step.nodeId}_${evt.step.index}`,
+          runId: focusedRunId,
+          index: evt.step.index,
+          nodeId: evt.step.nodeId,
+          nodeType: evt.step.nodeType,
+          status: "running",
+          input: {},
+          output: null,
+          error: null,
+          startedAt: evt.at,
+          finishedAt: null,
+          durationMs: null,
+        };
+        upsertStep(step);
+      },
+      onStepSuccess: (evt) => {
+        const step: RunStep = {
+          id: `live_${evt.step.nodeId}_${evt.step.index}`,
+          runId: focusedRunId,
+          index: evt.step.index,
+          nodeId: evt.step.nodeId,
+          nodeType: evt.step.nodeType,
+          status: "success",
+          input: {},
+          output: evt.step.output ?? null,
+          error: null,
+          startedAt: evt.at,
+          finishedAt: evt.at,
+          durationMs: evt.step.durationMs ?? null,
+        };
+        upsertStep(step);
+      },
+      onStepFailed: (evt) => {
+        const step: RunStep = {
+          id: `live_${evt.step.nodeId}_${evt.step.index}`,
+          runId: focusedRunId,
+          index: evt.step.index,
+          nodeId: evt.step.nodeId,
+          nodeType: evt.step.nodeType,
+          status: "failed",
+          input: {},
+          output: null,
+          error: evt.step.error ?? null,
+          startedAt: evt.at,
+          finishedAt: evt.at,
+          durationMs: evt.step.durationMs ?? null,
+        };
+        upsertStep(step);
+      },
+      // Quando o run termina, pula pra aba "executions" — usuário vê o
+      // resumo final com input/output/duração detalhados. Mantém o store
+      // populado pra animação congelada no estado final.
+      onRunSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(id) });
+        setTab("executions");
+      },
+      onRunFailed: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(id) });
+        setTab("executions");
+      },
+      onRunCancelled: () => {
+        queryClient.invalidateQueries({ queryKey: queryKeys.runs.list(id) });
+        setTab("executions");
+      },
+    });
+    return () => {
+      cancelled = true;
+      sub.close();
+    };
+  }, [id, focusedRunId, setFocused, upsertStep, queryClient]);
+
+  // Limpa o store quando sai da rota — evita anel verde "fantasma" se voltar
+  // pro mesmo workflow sem novo run.
+  useEffect(() => {
+    return () => clearExecution();
+  }, [clearExecution]);
 
   const handleRun = useCallback(
     (stopAtNodeId?: string) => {
@@ -438,7 +547,10 @@ function FlowRouteInner() {
           </div>
         </div>
         {tab === "editor" && (
-          <div className="pointer-events-none absolute left-1/2 top-6 z-30 flex -translate-x-1/2">
+          // Movido pra esquerda (`left-6`) — antes estava centralizado (left-1/2)
+          // e cobria os controles de canvas. Botão "Publicar vX" do banner
+          // também renderiza à esquerda nessa posição.
+          <div className="pointer-events-none absolute left-6 top-6 z-30 flex">
             <DraftAheadBanner
               workflowId={workflow.id}
               draftDefinition={workflow.definition}
